@@ -41,10 +41,19 @@ local armorFatigueCache = nil
 -- Last computed net rates (% per second). Positive = gaining, negative = losing.
 ICN2._lastRates             = { hunger = 0, thirst = 0, fatigue = 0 }
 ICN2._lastWellFedInstanceID = nil
+ICN2._wellFedPauseExpiry    = 0   -- GetTime() timestamp; 0 = not active
 
 -- Last computed fatigue recovery tier string (for /icn2 details output).
-ICN2._fatigueRecoveryTier = "none"  -- "none" | "slow" | "fast"
-ICN2._fatigueRecoverySrc  = ""      -- human-readable source list
+ICN2._fatigueRecoveryTier = "none"
+ICN2._fatigueRecoverySrc  = ""
+
+-- ── Safely call UpdateHUD() ─────────────────────────────────────────────────────────────────
+
+function ICN2:SafeUpdateHUD()
+    if self.UpdateHUD then
+        self:UpdateHUD()
+    end
+end
 
 -- ── Deep copy ─────────────────────────────────────────────────────────────────
 local function deepCopy(orig)
@@ -214,12 +223,15 @@ local function calculateCurrentRates()
     local dF = s.decayRates.fatigue * preset * mF * armor
 
     -- ── Fatigue recovery ─────────────────────────────────────────────────────
-    -- No recovery in combat or while mounted — those block sitting too.
+    -- Recovery blocked only by combat. Mounting is intentionally excluded:
+    -- you can be mounted in a rested area and still recover fatigue.
+    -- (You can't eat/drink or sit while mounted, so those sources naturally
+    -- won't fire — but IsResting(), nearCampfire, and inHousing still can.)
     local fatigueGain = 0
     local tier        = "none"
     local src         = {}
 
-    if not inCombat and not IsMounted() then
+    if not inCombat then
         local isResting  = IsResting() and true or false
         local isEatDrink = ICN2:IsEating() or ICN2:IsDrinking()
 
@@ -248,15 +260,41 @@ local function calculateCurrentRates()
     ICN2._fatigueRecoverySrc  = table.concat(src, ", ")
 
     -- ── Food/drink recovery for hunger/thirst ────────────────────────────────
+    -- Trickle rate = tier.trickle% spread across the buff duration.
+    -- Completion bonus is applied as a lump sum in FoodDrink on buff expiry.
+    --
+    -- Tier trickle amounts:
+    --   simple  → 30% over duration
+    --   complex → 40% over duration
+    --   feast   → 60% over duration (applies to both hunger AND thirst)
+    local TRICKLE = { simple = 30.0, complex = 40.0, feast = 60.0 }
+
     local foodRecovery  = 0
     local drinkRecovery = 0
+
     if ICN2:IsEating() then
         local duration = ICN2:GetFoodDuration() or 30
-        foodRecovery = 50.0 / math.max(1, duration)
+        local tier     = ICN2:GetFoodTier()
+        local trickle  = TRICKLE[tier] or TRICKLE.simple
+        foodRecovery   = trickle / math.max(1, duration)
+        -- Feasts restore both needs simultaneously
+        if tier == "feast" then
+            drinkRecovery = drinkRecovery + (trickle / math.max(1, duration))
+        end
     end
+
     if ICN2:IsDrinking() then
         local duration = ICN2:GetDrinkDuration() or 30
-        drinkRecovery = 50.0 / math.max(1, duration)
+        local tier     = ICN2:GetDrinkTier()
+        local trickle  = TRICKLE[tier] or TRICKLE.simple
+        drinkRecovery  = drinkRecovery + (trickle / math.max(1, duration))
+    end
+
+    -- ── Well Fed hunger decay pause ───────────────────────────────────────────
+    -- When Well Fed is active, hunger does not decay (dH becomes 0).
+    -- _wellFedPauseExpiry is set by FoodDrink.lua and expires on its own.
+    if ICN2._wellFedPauseExpiry and GetTime() < ICN2._wellFedPauseExpiry then
+        dH = 0
     end
 
     return {
@@ -350,7 +388,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
 
     elseif event == "PLAYER_EQUIPMENT_CHANGED" then
         local slot = ...
-        if slot == 5 then  -- chest slot changed
+        if slot == 5 then
             refreshArmorCache()
         end
 
@@ -383,8 +421,10 @@ end)
 --   nearCampfire — player has a campfire/cozy-fire buff
 --   inHousing    — player is in a housing zone
 function ICN2:DetectFatigueRecovery()
-    -- Hard blocks — nothing recovers while in combat or mounted
-    if inCombat or IsMounted() then
+    -- Combat blocks all recovery. Mounting does NOT — you can be mounted
+    -- in a rested area and still recover. Sitting/eating won't fire while
+    -- mounted anyway since those actions dismount you.
+    if inCombat then
         isSitting    = false
         nearCampfire = false
         -- Note: inHousing intentionally not cleared — the zone doesn't change
@@ -430,6 +470,7 @@ end
 -- ── Racial / class ability recovery ──────────────────────────────────────────
 local ABILITY_RECOVERY = {
     [20577]  = function() ICN2:Eat(40) end,
+    [108968] = function() ICN2:Drink(40) end,
     [204065] = function() ICN2:Eat(10); ICN2:Rest(10) end,
     [58984]  = function() ICN2:Rest(5) end,
 }
@@ -483,8 +524,17 @@ function ICN2:PrintDetails()
             ICN2._fatigueRecoveryTier, ICN2._fatigueRecoverySrc ~= "" and ICN2._fatigueRecoverySrc or "n/a"))
     end
     print(sep)
-    if ICN2:IsEating()   then print(P .. " |cFF00FF00Currently eating|r")   end
-    if ICN2:IsDrinking() then print(P .. " |cFF4499FFCurrently drinking|r") end
+    if ICN2:IsEating()   then
+        print(string.format(P .. " |cFF00FF00Currently eating|r  (tier: %s)", ICN2:GetFoodTier()))
+    end
+    if ICN2:IsDrinking() then
+        print(string.format(P .. " |cFF4499FFCurrently drinking|r (tier: %s)", ICN2:GetDrinkTier()))
+    end
+    local wfExpiry = ICN2._wellFedPauseExpiry or 0
+    if wfExpiry > 0 and GetTime() < wfExpiry then
+        local remaining = math.ceil(wfExpiry - GetTime())
+        print(string.format(P .. " |cFF00FF00Well Fed|r — hunger decay paused (%ds remaining)", remaining))
+    end
 end
 
 -- ── Slash commands ────────────────────────────────────────────────────────────

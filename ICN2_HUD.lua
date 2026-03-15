@@ -26,12 +26,12 @@ local hudFrame
 local bars = {}
 
 -- ── Layout constants ──────────────────────────────────────────────────────────
-local BLOCK_SIZE  = 24
+local BLOCK_SIZE  = 20   -- reduced from 24 to give the indicator glyph more room
 local BAR_GAP     = 6
 local ICON_SIZE   = 24
 local NUM_BLOCKS  = 10
 local BLOCK_GAP   = 2
-local INDICATOR_W = 18
+local INDICATOR_W = 28   -- widened to fit ">>>" / "<<<"
 
 local NEED_KEYS = { "hunger", "thirst", "fatigue" }
 
@@ -65,8 +65,10 @@ local PULSE_PERIOD = 2.00 -- seconds for a full pulse cycle (min → max → min
 local PULSE_MIN    = 0.25 -- minimum alpha for pulse (at trough)
 local PULSE_MAX    = 1.00 -- maximum alpha for pulse (at peak)
 
+-- All active glyphs pulse. "##" (stable) does not.
 local function shouldPulse(glyph)
-    return glyph == "<" or glyph == "<<" or glyph == ">" or glyph == ">>"
+    return glyph == ">"   or glyph == ">>"  or glyph == ">>>"
+        or glyph == "<"   or glyph == "<<"  or glyph == "<<<"
 end
 
 -- ── Color helper ──────────────────────────────────────────────────────────────
@@ -80,51 +82,54 @@ local function getNeedColor(key, val)
 end
 
 -- ── Indicator glyph + color from net rate ─────────────────────────────────────
+-- IMPORTANT: negative thresholds must be checked from most extreme (most
+-- negative) to least extreme, otherwise <<< is unreachable because
+-- rate < IND_FAST_DOWN (-0.30) would catch rate < IND_FASTER_DOWN (-1.00) first.
 local function getIndicator(rate)
     if rate >= IND_FASTER_UP then
-        return ">>>", 0.0, 1.0, 0.0 -- pure green for very fast positive rates
+        return ">>>", 0.0, 1.0, 0.0     -- very fast recovery
     elseif rate >= IND_FAST_UP then
-        return ">>", 0.2, 0.9, 0.1 -- bright green for moderate positive rates
+        return ">>",  0.2, 0.9, 0.1     -- fast recovery
     elseif rate >= IND_UP then
-        return ">",  0.7, 0.9, 0.4 -- light green for slow positive rates
-    elseif rate < IND_DOWN then
-        return "<",  0.9, 0.7, 0.1 -- orange for slow negative rates
+        return ">",   0.7, 0.9, 0.4     -- slow recovery
+    elseif rate < IND_FASTER_DOWN then   -- check most extreme first
+        return "<<<", 1.0, 0.0, 0.0     -- very fast decay
     elseif rate < IND_FAST_DOWN then
-        return "<<", 0.9, 0.2, 0.1 -- red-orange for moderate negative rates
-    elseif rate < IND_FASTER_DOWN then
-        return "<<<", 1.0, 0.0, 0.0 -- pure red for very fast negative rates
+        return "<<",  0.9, 0.2, 0.1     -- fast decay
+    elseif rate < IND_DOWN then
+        return "<",   0.9, 0.7, 0.1     -- slow decay
     else
-        return "##", 1.0, 1.0, 1.0 -- white as fallback (should never happen)
+        return "##",  1.0, 1.0, 1.0     -- stable
     end
 end
 
 -- ── Build the HUD ─────────────────────────────────────────────────────────────
+
+
 function ICN2:BuildHUD()
     local s = ICN2DB.settings
 
     local barW   = (BLOCK_SIZE + BLOCK_GAP) * NUM_BLOCKS
     local frameW = ICON_SIZE + 4 + barW + INDICATOR_W + 14
-    local frameH = (BLOCK_SIZE + BAR_GAP) * #NEED_KEYS + 14
+    local frameH = (BLOCK_SIZE + BAR_GAP) * #NEED_KEYS + 40 -- taller for header
 
-    hudFrame = CreateFrame("Frame", "ICN2HUDFrame", UIParent)
+    hudFrame = CreateFrame("Frame", "ICN2HUDFrame", UIParent, "BackdropTemplate")
     hudFrame:SetSize(frameW, frameH)
     hudFrame:SetFrameStrata("MEDIUM")
     hudFrame:SetClampedToScreen(true)
     hudFrame:SetPoint("CENTER", UIParent, "CENTER", s.hudX or 200, s.hudY or -250)
 
-    local bg = hudFrame:CreateTexture(nil, "BACKGROUND")
-    bg:SetAllPoints()
-    bg:SetTexture("Interface\\Tooltips\\UI-Tooltip-Background")
-    bg:SetVertexColor(0, 0, 0, 0.6)
-
-    local border = CreateFrame("Frame", nil, hudFrame, "BackdropTemplate")
-    border:SetAllPoints()
-    border:SetBackdrop({
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        edgeSize = 8,
-        insets   = { left = 2, right = 2, top = 2, bottom = 2 },
+    hudFrame:SetBackdrop({
+        bgFile   = "Interface/Tooltips/UI-Tooltip-Background",
+        edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+        tile     = true,
+        tileSize = 16,
+        edgeSize = 12,
+        insets   = { left = 3, right = 3, top = 3, bottom = 3 },
     })
-    border:SetBackdropBorderColor(0.4, 0.4, 0.4, 0.8)
+
+    hudFrame:SetBackdropColor(0.05, 0.05, 0.05, 0.85)
+    hudFrame:SetBackdropBorderColor(0.3, 0.3, 0.3)
 
     hudFrame:EnableMouse(true)
     hudFrame:SetMovable(true)
@@ -151,13 +156,30 @@ function ICN2:BuildHUD()
     end)
     hudFrame:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
+    local header = CreateFrame("Frame", nil, hudFrame)
+    header:SetHeight(24)
+    header:SetPoint("TOPLEFT", hudFrame, "TOPLEFT", 4, -4)
+    header:SetPoint("TOPRIGHT", hudFrame, "TOPRIGHT", -4, -4)
+
+    local headerBG = header:CreateTexture(nil, "BACKGROUND")
+    headerBG:SetAllPoints()
+    headerBG:SetColorTexture(0.1, 0.1, 0.1, 0.9)
+
+    local title = header:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    title:SetPoint("LEFT", header, "LEFT", 6, 0)
+    title:SetText("Character Needs")
+
     -- ── Build rows ────────────────────────────────────────────────────────────
+    local content = CreateFrame("Frame", nil, hudFrame)
+    content:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -4)
+    content:SetPoint("BOTTOMRIGHT", hudFrame, "BOTTOMRIGHT", -4, 4)
+
     for i, key in ipairs(NEED_KEYS) do
         local fc = BLOCK_COLORS[key]
 
         local rowFrame = CreateFrame("Frame", "ICN2Row_" .. key, hudFrame)
         rowFrame:SetSize(frameW - 8, BLOCK_SIZE)
-        rowFrame:SetPoint("TOPLEFT", hudFrame, "TOPLEFT",
+        rowFrame:SetPoint("TOPLEFT", content, "TOPLEFT",
             4, -((i - 1) * (BLOCK_SIZE + BAR_GAP)) - 7)
 
         local icon = rowFrame:CreateTexture(nil, "ARTWORK")
@@ -284,26 +306,29 @@ function ICN2:BuildHUD()
     end
 
     -- ── Command buttons ───────────────────────────────────────────────────────
-    local cmdButton1 = CreateFrame("Button", "ICN2CmdButton1", hudFrame, "UIPanelButtonTemplate")
-    cmdButton1:SetSize(24, 24)
-    cmdButton1:SetPoint("TOPRIGHT", hudFrame, "TOPRIGHT", 0, 24)
+    local cmdButton1 = CreateFrame("Button", nil, header)
+    cmdButton1:SetSize(20,20)
+    cmdButton1:SetPoint("RIGHT", header, "RIGHT", -2, 0)
+
     local configTex = cmdButton1:CreateTexture(nil, "ARTWORK")
     configTex:SetAllPoints()
     configTex:SetAtlas("poi-workorders")
-    cmdButton1:SetScript("OnClick", function() ICN2:ToggleOptions() end)
 
-    local cmdButton2 = CreateFrame("Button", "ICN2CmdButton2", hudFrame, "UIPanelButtonTemplate")
-    cmdButton2:SetSize(24, 24)
-    cmdButton2:SetPoint("TOPRIGHT", hudFrame, "TOPRIGHT", -24, 24)
+    cmdButton1:SetScript("OnClick", function()
+        ICN2:ToggleOptions()
+    end)
+
+    local cmdButton2 = CreateFrame("Button", nil, header)
+    cmdButton2:SetSize(20,20)
+    cmdButton2:SetPoint("RIGHT", cmdButton1, "LEFT", -2, 0)
+
     local infoTex = cmdButton2:CreateTexture(nil, "ARTWORK")
     infoTex:SetAllPoints()
     infoTex:SetAtlas("loreobject-32x32")
-    cmdButton2:SetScript("OnClick", function() ICN2:PrintDetails() end)
 
-    hudFrame:SetAlpha(s.hudAlpha)
-    hudFrame:SetScale(s.hudScale)
-    ICN2:ApplyBarMode()
-    if not s.hudEnabled then hudFrame:Hide() end
+    cmdButton2:SetScript("OnClick", function()
+        ICN2:PrintDetails()
+    end)
 end
 
 -- ── ApplyBarMode ──────────────────────────────────────────────────────────────

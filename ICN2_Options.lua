@@ -74,7 +74,7 @@ function ICN2:BuildOptions()
     optFrame:SetScript("OnDragStop",  function(self) self:StopMovingOrSizing() end)
     optFrame:Hide()
 
-    optFrame.TitleText:SetText("|cFFFF6600ICN2|r – Character Needs Options  |cFF888888v1.1|r")
+    optFrame.TitleText:SetText("|cFFFF6600ICN2|r – Character Needs Options  |cFF888888v1.4.0|r")
 
     -- ── Section: Decay Preset ────────────────────────────────────────────────
     makeLabel(optFrame, "Decay Preset:", 14, -35, 1, 0.8, 0)

@@ -53,8 +53,6 @@ local BLOCK_COLORS = {
 -- ── Indicator thresholds (% per second) ──────────────────────────────────────
 local IND_FASTER_UP     =  1.00
 local IND_FAST_UP       =  0.30
-local IND_UP            =  0.00
-local IND_DOWN          =  0.00
 local IND_FAST_DOWN     = -0.30
 local IND_FASTER_DOWN   = -1.00
 
@@ -85,21 +83,27 @@ end
 -- IMPORTANT: negative thresholds must be checked from most extreme (most
 -- negative) to least extreme, otherwise <<< is unreachable because
 -- rate < IND_FAST_DOWN (-0.30) would catch rate < IND_FASTER_DOWN (-1.00) first.
+--
+-- ## is returned for rates within ±STABLE_EPSILON of zero — this covers
+-- the Well Fed pause case where hunger rate is exactly 0.0 but shouldn't
+-- show as recovering (>).
+local STABLE_EPSILON = 0.002  -- ~0.12%/min — below this is considered stable
+
 local function getIndicator(rate)
-    if rate >= IND_FASTER_UP then
+    if math.abs(rate) <= STABLE_EPSILON then
+        return "##",  0.6, 0.6, 0.6     -- stable / paused
+    elseif rate >= IND_FASTER_UP then
         return ">>>", 0.0, 1.0, 0.0     -- very fast recovery
     elseif rate >= IND_FAST_UP then
         return ">>",  0.2, 0.9, 0.1     -- fast recovery
-    elseif rate >= IND_UP then
+    elseif rate > 0 then
         return ">",   0.7, 0.9, 0.4     -- slow recovery
-    elseif rate < IND_FASTER_DOWN then   -- check most extreme first
+    elseif rate <= IND_FASTER_DOWN then  -- check most extreme first
         return "<<<", 1.0, 0.0, 0.0     -- very fast decay
-    elseif rate < IND_FAST_DOWN then
+    elseif rate <= IND_FAST_DOWN then
         return "<<",  0.9, 0.2, 0.1     -- fast decay
-    elseif rate < IND_DOWN then
-        return "<",   0.9, 0.7, 0.1     -- slow decay
     else
-        return "##",  1.0, 1.0, 1.0     -- stable
+        return "<",   0.9, 0.7, 0.1     -- slow decay
     end
 end
 

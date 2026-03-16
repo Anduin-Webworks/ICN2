@@ -1,62 +1,47 @@
 -- ============================================================
--- ICN2_Core.lua  (v1.2.0)
--- Core engine: initialization, decay tick, persistence,
--- situational detection, race/class modifiers.
+-- Core engine: initialization, tick scheduler, persistence, rate engine, and module coordination.--
+-- Pipeline
+--   Game World
+--     ↓
+--   ICN2_State.lua  — ICN2:UpdateState()
+--     writes ICN2.State (inCombat, isSwimming, isSitting, …)
+--     ↓
+--   Rate Engine  — ICN2:GetCurrentRates()
+--     reads ICN2.State, never calls WoW APIs directly
+--     └─ _ApplyBaseDecay
+--     └─ _ApplySituationModifiers
+--     └─ _ApplyRaceClassModifiers
+--     └─ _ApplyArmorModifier
+--     └─ _ApplyFoodDrinkRecovery
+--     └─ _ApplyFatigueRecovery
+--     └─ _ApplyWellFedPause
+--     ↓
+--   tick()  — applies rates → clamp → HUD → emotes
+--
+-- Core owns: scheduler, persistence, rate engine, events.
+-- Core does NOT own: condition detection (→ ICN2_State.lua).
 -- ============================================================
 
 ICN2 = ICN2 or {}
 
--- ── Internal state ────────────────────────────────────────────────────────────
+-- ── Frame and tick ────────────────────────────────────────────────────────────
 local frame        = CreateFrame("Frame", "ICN2Frame", UIParent)
 local tickInterval = 1.0
 local elapsed      = 0
 
-local inCombat   = false
-local isSwimming = false
-
--- Fatigue recovery state — evaluated each tick by DetectFatigueRecovery().
--- isSitting:    true when the player's /sit aura is detected (see below).
--- nearCampfire: true when the player has a campfire/cozy-fire buff.
--- inHousing:    true when the player is in a housing zone/plot.
--- Any of these can stack; the tier (slow vs fast) is resolved in
--- calculateCurrentRates() based on the combination.
-local isSitting    = false
-local nearCampfire = false
-local inHousing    = false
-
--- ── Why aura-based sitting detection? ────────────────────────────────────────
--- UnitIsSitting("player") was removed in Retail 12.0 (TWW pre-patch).
--- The replacement approach scans the player's HELPFUL auras for the
--- "Restful" buff that WoW silently applies when /sit, /sleep, or /kneel
--- is used in a non-combat, non-mounted context.
--- Fallback: if the aura is never found, isSitting stays false — safe default.
-local SIT_AURA_PATTERNS = { "restful", "resting", "sitting" }
-
--- Cached armor fatigue modifier. Populated on PLAYER_LOGIN and whenever
--- the chest slot changes (PLAYER_EQUIPMENT_CHANGED). Avoids calling
--- C_Item.GetItemInfo every tick, which can return nil until the item
--- data is server-cached.
+-- ── Armor fatigue cache ───────────────────────────────────────────────────────
+-- GetItemInfo is async — we cache on login/equipment-change and never call it from inside the tick or the rate engine.
 local armorFatigueCache = nil
 
--- Last computed net rates (% per second). Positive = gaining, negative = losing.
+-- ── Public state (read by HUD, FoodDrink, PrintDetails) ──────────────────────
 ICN2._lastRates             = { hunger = 0, thirst = 0, fatigue = 0 }
 ICN2._lastWellFedInstanceID = nil
-ICN2._wellFedPauseExpiry    = 0   -- GetTime() timestamp; 0 = not active
+ICN2._wellFedPauseExpiry    = 0      -- GetTime() timestamp; 0 = not active
+ICN2._fatigueRecoveryTier   = "none" -- "none" | "slow" | "fast"  (for PrintDetails)
+ICN2._fatigueRecoverySrc    = ""     -- human-readable source list (for PrintDetails)
 
--- Last computed fatigue recovery tier string (for /icn2 details output).
-ICN2._fatigueRecoveryTier = "none"
-ICN2._fatigueRecoverySrc  = ""
-
--- ── Safely call UpdateHUD() ─────────────────────────────────────────────────────────────────
-
-function ICN2:SafeUpdateHUD()
-    if self.UpdateHUD then
-        self:UpdateHUD()
-    end
-end
-
--- ── Deep copy ─────────────────────────────────────────────────────────────────
-local function deepCopy(orig)
+-- ══ SECTION 1 — Initialization helpers ════════════════════════════════════════
+local function deepCopy(orig) -- for copying tables from DEFAULTS into the saved variable without reference links
     local copy = {}
     for k, v in pairs(orig) do
         copy[k] = (type(v) == "table") and deepCopy(v) or v
@@ -64,8 +49,7 @@ local function deepCopy(orig)
     return copy
 end
 
--- ── Init / merge saved variables ─────────────────────────────────────────────
-local function initDB()
+local function initDB() -- ensures all keys from ICN2.DEFAULTS are present in ICN2DB, without overwriting existing values
     if not ICN2DB then
         ICN2DB = deepCopy(ICN2.DEFAULTS)
         ICN2DB.lastLogout = time()
@@ -84,7 +68,7 @@ local function initDB()
 end
 
 -- ── Offline decay ─────────────────────────────────────────────────────────────
-local function applyOfflineDecay()
+local function applyOfflineDecay() -- applies decay based on the time elapsed since last logout, up to a max of 8 hours
     if not ICN2DB.lastLogout then return end
     if ICN2DB.settings.freezeOfflineNeeds then return end
 
@@ -102,226 +86,234 @@ local function applyOfflineDecay()
     ICN2:UpdateHUD()
 end
 
--- ── Armor fatigue cache ───────────────────────────────────────────────────────
--- C_Item.GetItemInfo is asynchronous — it queues a server request and
--- returns nil until the item data arrives in the client cache.
--- We call it once on login / equipment change and store the result.
--- The fallback is CLOTH (0.9) so a Warrior with uncached data gets a
--- slightly lower multiplier until the cache populates, which is conservative.
-local function refreshArmorCache()
-    local itemLink = GetInventoryItemLink("player", 5)  -- chest slot
+-- ── Armor cache ───────────────────────────────────────────────────────────────
+local function refreshArmorCache() -- checks the player's equipped chest armor and updates armorFatigueCache accordingly; defaults to CLOTH if info is unavailable
+    local itemLink = GetInventoryItemLink("player", 5)
     if not itemLink then
         armorFatigueCache = ICN2.ARMOR_FATIGUE.CLOTH
         return
     end
-    
-    -- WoW 12.0 Retail: Use GetItemInfo() global function which returns:
-    -- name, link, rarity, level, minLevel, type, subType, stackCount, texture, vendorPrice
-    -- GetItemInfo is still the way to get item subtype in WoW 12.0, despite deprecation warning
 ---@diagnostic disable-next-line: deprecated
-    local name, _, _, _, _, itemType, subType = GetItemInfo(itemLink)
-    
+    local _, _, _, _, _, _, subType = GetItemInfo(itemLink)
     if not subType then
-        -- Data not yet cached; keep previous value (or default) and retry next equipment change
-        if not armorFatigueCache then
-            armorFatigueCache = ICN2.ARMOR_FATIGUE.CLOTH
-        end
+        if not armorFatigueCache then armorFatigueCache = ICN2.ARMOR_FATIGUE.CLOTH end
         return
     end
-    
-    if subType:find("Plate")   then 
-        armorFatigueCache = ICN2.ARMOR_FATIGUE.PLATE
-    elseif subType:find("Mail") then 
-        armorFatigueCache = ICN2.ARMOR_FATIGUE.MAIL
-    elseif subType:find("Leather") then 
-        armorFatigueCache = ICN2.ARMOR_FATIGUE.LEATHER
-    else
-        armorFatigueCache = ICN2.ARMOR_FATIGUE.CLOTH
+    if     subType:find("Plate")   then armorFatigueCache = ICN2.ARMOR_FATIGUE.PLATE
+    elseif subType:find("Mail")    then armorFatigueCache = ICN2.ARMOR_FATIGUE.MAIL
+    elseif subType:find("Leather") then armorFatigueCache = ICN2.ARMOR_FATIGUE.LEATHER
+    else                                armorFatigueCache = ICN2.ARMOR_FATIGUE.CLOTH
     end
 end
 
--- ── Situation multipliers ─────────────────────────────────────────────────────
-local function getSituationMultipliers(collectLabels)
-    local mH, mT, mF = 1.0, 1.0, 1.0
-    local labels = collectLabels and {} or nil
+-- ══ SECTION 2 — Condition detection ════════════════════════════════════════════
+-- ICN2:UpdateState() is called from OnUpdate each tick.
+-- ICN2.State is the single source of truth for all condition flags.
+-- These stubs exist only for backward compatibility with any external callers.
 
-    if IsResting() then
-        local r = ICN2.SITUATION_MODIFIERS.resting
-        mH, mT, mF = mH * r.hunger, mT * r.thirst, mF * r.fatigue
-        if labels then table.insert(labels, string.format("resting (H×%.2f T×%.2f F×%.2f)", r.hunger, r.thirst, r.fatigue)) end
-    else
-        if IsMounted() then
-            local m = ICN2.SITUATION_MODIFIERS.mounted
-            mH, mT, mF = mH * m.hunger, mT * m.thirst, mF * m.fatigue
-            if labels then table.insert(labels, string.format("mounted (H×%.2f T×%.2f F×%.2f)", m.hunger, m.thirst, m.fatigue)) end
-        end
-        if IsFlying() then
-            local f = ICN2.SITUATION_MODIFIERS.flying
-            mH, mT, mF = mH * f.hunger, mT * f.thirst, mF * f.fatigue
-            if labels then table.insert(labels, string.format("flying (H×%.2f T×%.2f F×%.2f)", f.hunger, f.thirst, f.fatigue)) end
-        end
-        if isSwimming then
-            local sw = ICN2.SITUATION_MODIFIERS.swimming
-            mH, mT, mF = mH * sw.hunger, mT * sw.thirst, mF * sw.fatigue
-            if labels then table.insert(labels, string.format("swimming (H×%.2f T×%.2f F×%.2f)", sw.hunger, sw.thirst, sw.fatigue)) end
-        end
-        if inCombat then
-            local c = ICN2.SITUATION_MODIFIERS.combat
-            mH, mT, mF = mH * c.hunger, mT * c.thirst, mF * c.fatigue
-            if labels then table.insert(labels, string.format("combat (H×%.2f T×%.2f F×%.2f)", c.hunger, c.thirst, c.fatigue)) end
-        end
-        if IsIndoors() and not inCombat and not IsMounted() then
-            local ind = ICN2.SITUATION_MODIFIERS.indoors
-            mH, mT, mF = mH * ind.hunger, mT * ind.thirst, mF * ind.fatigue
-            if labels then table.insert(labels, string.format("indoors (H×%.2f T×%.2f F×%.2f)", ind.hunger, ind.thirst, ind.fatigue)) end
-        end
+function ICN2:DetectConditions()
+    ICN2:UpdateState()
+end
+
+function ICN2:DetectFatigueRecovery()
+    ICN2:UpdateState()
+end
+
+-- ══ SECTION 3 — Rate Engine ════════════════════════════════════════════════════
+-- Each modifier function receives the rates table and mutates it.
+-- Sign convention: positive rate = gaining (recovery), negative = losing (decay).
+-- The engine builds up a net rate per need in % per second.
+--
+-- Pipeline:
+--   GetCurrentRates()
+--     1. _ApplyBaseDecay          → sets the starting negative rate
+--     2. _ApplySituationModifiers → scales rates by activity/location
+--     3. _ApplyRaceClassModifiers → scales rates by biological traits
+--     4. _ApplyArmorModifier      → scales fatigue decay by armor type
+--     5. _ApplyFoodDrinkRecovery  → adds positive recovery while eating/drinking
+--     6. _ApplyFatigueRecovery    → adds positive fatigue recovery when resting
+--     7. _ApplyWellFedPause       → zeroes hunger decay when Well Fed is active
+
+-- ── 1. Base decay ─────────────────────────────────────────────────────────────
+function ICN2:_ApplyBaseDecay(rates) -- applies the configured base rates × preset multiplier as negative values.
+    local s      = ICN2DB.settings
+    local preset = ICN2.PRESETS[s.preset] or 1.0
+
+    rates.hunger  = rates.hunger  - s.decayRates.hunger  * preset
+    rates.thirst  = rates.thirst  - s.decayRates.thirst  * preset
+    rates.fatigue = rates.fatigue - s.decayRates.fatigue * preset
+end
+
+-- ── 2. Situation modifiers ────────────────────────────────────────────────────
+-- Scales the current rates by activity/location multipliers from ICN2_Data. Multipliers > 1 = faster decay, < 1 = slower decay.
+function ICN2:_ApplySituationModifiers(rates) -- reads ICN2.State and applies the relevant modifiers from ICN2.SITUATION_MODIFIERS
+    local sm = ICN2.SITUATION_MODIFIERS
+    local st = ICN2.State
+
+    if st.isResting then -- resting is exclusive; if true, skip all other modifiers
+        rates.hunger  = rates.hunger  * sm.resting.hunger
+        rates.thirst  = rates.thirst  * sm.resting.thirst
+        rates.fatigue = rates.fatigue * sm.resting.fatigue
+        return  -- resting is exclusive; skip all other situations
     end
 
+    if st.isMounted then -- mounting is not exclusive; it can stack with combat, flying, indoors, etc., but not resting
+        rates.hunger  = rates.hunger  * sm.mounted.hunger
+        rates.thirst  = rates.thirst  * sm.mounted.thirst
+        rates.fatigue = rates.fatigue * sm.mounted.fatigue
+    end
+    if st.isFlying then -- flying is not exclusive; it can stack with mounted, combat, indoors, etc., but not resting
+        rates.hunger  = rates.hunger  * sm.flying.hunger
+        rates.thirst  = rates.thirst  * sm.flying.thirst
+        rates.fatigue = rates.fatigue * sm.flying.fatigue
+    end
+    if st.isSwimming then -- swimming is not exclusive; it can stack with combat, indoors, etc., but not resting or mounted
+        rates.hunger  = rates.hunger  * sm.swimming.hunger
+        rates.thirst  = rates.thirst  * sm.swimming.thirst
+        rates.fatigue = rates.fatigue * sm.swimming.fatigue
+    end
+    if st.inCombat then -- combat is not exclusive; it can stack with flying, swimming, etc., but not resting or mounted
+        rates.hunger  = rates.hunger  * sm.combat.hunger
+        rates.thirst  = rates.thirst  * sm.combat.thirst
+        rates.fatigue = rates.fatigue * sm.combat.fatigue
+    end
+    if st.isIndoors and not st.inCombat and not st.isMounted then -- indoors is exclusive with combat and mounting, but can stack with flying, swimming, etc.
+        rates.hunger  = rates.hunger  * sm.indoors.hunger
+        rates.thirst  = rates.thirst  * sm.indoors.thirst
+        rates.fatigue = rates.fatigue * sm.indoors.fatigue
+    end
+end
+
+-- ── 3. Race + class modifiers ─────────────────────────────────────────────────
+function ICN2:_ApplyRaceClassModifiers(rates) -- Scales the current rates by biological trait multipliers from ICN2_Data.
     local race = select(2, UnitRace("player"))
     local rm   = ICN2.RACE_MODIFIERS[race]
     if rm then
-        mH, mT, mF = mH * rm.hunger, mT * rm.thirst, mF * rm.fatigue
-        if labels then table.insert(labels, string.format("race:%s (H×%.2f T×%.2f F×%.2f)", race, rm.hunger, rm.thirst, rm.fatigue)) end
+        rates.hunger  = rates.hunger  * rm.hunger
+        rates.thirst  = rates.thirst  * rm.thirst
+        rates.fatigue = rates.fatigue * rm.fatigue
     end
 
     local _, class = UnitClass("player")
     local cm = ICN2.CLASS_MODIFIERS[class]
     if cm then
-        mH, mT, mF = mH * cm.hunger, mT * cm.thirst, mF * cm.fatigue
-        if labels then table.insert(labels, string.format("class:%s (H×%.2f T×%.2f F×%.2f)", class, cm.hunger, cm.thirst, cm.fatigue)) end
+        rates.hunger  = rates.hunger  * cm.hunger
+        rates.thirst  = rates.thirst  * cm.thirst
+        rates.fatigue = rates.fatigue * cm.fatigue
     end
-
-    return mH, mT, mF, labels
 end
 
--- ── Calculate current net rates ───────────────────────────────────────────────
--- Fatigue recovery tiers (evaluated in priority order):
---
---   FAST  → IsResting() AND (nearCampfire OR inHousing)
---           Best possible rest: inn/city + warmth or home.
---
---   SLOW  → any single condition:
---             • isSitting  (detected via sit aura, see DetectFatigueRecovery)
---             • nearCampfire (Cozy Fire / campfire buff)
---             • IsEating() or IsDrinking() (implies seated, out of combat)
---             • IsResting() alone (inn/city without extras)
---             • inHousing alone
---
---   NONE  → none of the above (active play, combat, mounted, etc.)
---
--- Depletion rules are unchanged — race/class/situation/armor modifiers
--- still stack on top of the base decay rate.
-local function calculateCurrentRates()
-    local s      = ICN2DB.settings
-    local preset = ICN2.PRESETS[s.preset] or 1.0
-    local mH, mT, mF = getSituationMultipliers()
-    local armor  = armorFatigueCache or ICN2.ARMOR_FATIGUE.CLOTH
+-- ── 4. Armor modifier ─────────────────────────────────────────────────────────
+function ICN2:_ApplyArmorModifier(rates) -- Scales fatigue decay by armor type. Uses the cached armorFatigueCache set by refreshArmorCache(), or defaults to CLOTH if the cache is not yet available.
+    local armor = armorFatigueCache or ICN2.ARMOR_FATIGUE.CLOTH
+    rates.fatigue = rates.fatigue * armor
+end
 
-    -- Base decay per second
-    local dH = s.decayRates.hunger  * preset * mH
-    local dT = s.decayRates.thirst  * preset * mT
-    local dF = s.decayRates.fatigue * preset * mF * armor
+-- ── 5. Food / drink recovery ──────────────────────────────────────────────────
+-- Adds a positive trickle to hunger/thirst while the eating/drinking buff is active. The trickle is spread evenly over the buff duration.
+local FOOD_TRICKLE = { simple = 30.0, complex = 40.0, feast = 60.0 }
 
-    -- ── Fatigue recovery ─────────────────────────────────────────────────────
-    -- Recovery blocked only by combat. Mounting is intentionally excluded:
-    -- you can be mounted in a rested area and still recover fatigue.
-    -- (You can't eat/drink or sit while mounted, so those sources naturally
-    -- won't fire — but IsResting(), nearCampfire, and inHousing still can.)
-    local fatigueGain = 0
-    local tier        = "none"
-    local src         = {}
-
-    if not inCombat then
-        local isResting  = IsResting() and true or false
-        local isEatDrink = ICN2:IsEating() or ICN2:IsDrinking()
-
-        -- Fast tier: rested area + campfire/housing
-        if isResting and (nearCampfire or inHousing) then
-            fatigueGain = ICN2.FATIGUE_RECOVERY.fast
-            tier        = "fast"
-            table.insert(src, "rested area")
-            if nearCampfire then table.insert(src, "campfire") end
-            if inHousing    then table.insert(src, "housing")  end
-
-        -- Slow tier: any single qualifying condition
-        elseif isResting or isSitting or nearCampfire or inHousing or isEatDrink then
-            fatigueGain = ICN2.FATIGUE_RECOVERY.slow
-            tier        = "slow"
-            if isResting  then table.insert(src, "rested area") end
-            if isSitting  then table.insert(src, "sitting")     end
-            if nearCampfire then table.insert(src, "campfire")  end
-            if inHousing  then table.insert(src, "housing")     end
-            if isEatDrink then table.insert(src, "eating/drinking") end
-        end
-    end
-
-    -- Cache for PrintDetails / HUD indicator
-    ICN2._fatigueRecoveryTier = tier
-    ICN2._fatigueRecoverySrc  = table.concat(src, ", ")
-
-    -- ── Food/drink recovery for hunger/thirst ────────────────────────────────
-    -- Trickle rate = tier.trickle% spread across the buff duration.
-    -- Completion bonus is applied as a lump sum in FoodDrink on buff expiry.
-    --
-    -- Tier trickle amounts:
-    --   simple  → 30% over duration
-    --   complex → 40% over duration
-    --   feast   → 60% over duration (applies to both hunger AND thirst)
-    local TRICKLE = { simple = 30.0, complex = 40.0, feast = 60.0 }
-
-    local foodRecovery  = 0
-    local drinkRecovery = 0
-
+function ICN2:_ApplyFoodDrinkRecovery(rates) -- checks for active food/drink buffs and applies the appropriate trickle recovery based on tier and duration; also applies thirst recovery during feasts
     if ICN2:IsEating() then
         local duration = ICN2:GetFoodDuration() or 30
         local tier     = ICN2:GetFoodTier()
-        local trickle  = TRICKLE[tier] or TRICKLE.simple
-        foodRecovery   = trickle / math.max(1, duration)
-        -- Feasts restore both needs simultaneously
+        local trickle  = FOOD_TRICKLE[tier] or FOOD_TRICKLE.simple
+        local perSec   = trickle / math.max(1, duration)
+        rates.hunger   = rates.hunger + perSec
+        -- Feasts also restore thirst during the eating animation
         if tier == "feast" then
-            drinkRecovery = drinkRecovery + (trickle / math.max(1, duration))
+            rates.thirst = rates.thirst + perSec
         end
     end
 
     if ICN2:IsDrinking() then
         local duration = ICN2:GetDrinkDuration() or 30
         local tier     = ICN2:GetDrinkTier()
-        local trickle  = TRICKLE[tier] or TRICKLE.simple
-        drinkRecovery  = drinkRecovery + (trickle / math.max(1, duration))
+        local trickle  = FOOD_TRICKLE[tier] or FOOD_TRICKLE.simple
+        rates.thirst   = rates.thirst + (trickle / math.max(1, duration))
+    end
+end
+
+-- ── 6. Fatigue recovery ───────────────────────────────────────────────────────
+-- Tiers:
+--   fast → IsResting() AND (nearCampfire OR inHousing)   — ~2 min to full
+--   slow → any single condition                           — ~5 min to full
+--   none → no qualifying condition, or in combat
+function ICN2:_ApplyFatigueRecovery(rates) -- checks for qualifying conditions and applies the appropriate fatigue recovery; also sets _fatigueRecoveryTier and _fatigueRecoverySrc for PrintDetails
+    local st = ICN2.State
+
+    if st.inCombat then
+        ICN2._fatigueRecoveryTier = "none"
+        ICN2._fatigueRecoverySrc  = ""
+        return
     end
 
-    -- ── Well Fed hunger decay pause ───────────────────────────────────────────
-    -- When Well Fed is active, hunger does not decay (dH becomes 0).
-    -- _wellFedPauseExpiry is set by FoodDrink.lua and expires on its own.
+    local isEatDrink = ICN2:IsEating() or ICN2:IsDrinking()
+    local src        = {}
+    local gain       = 0
+    local tier       = "none"
+
+    if st.isResting and (st.nearCampfire or st.inHousing) then
+        gain = ICN2.FATIGUE_RECOVERY.fast
+        tier = "fast"
+        table.insert(src, "rested area")
+        if st.nearCampfire then table.insert(src, "campfire") end
+        if st.inHousing    then table.insert(src, "housing")  end
+
+    elseif st.isResting or st.isSitting or st.nearCampfire or st.inHousing or isEatDrink then
+        gain = ICN2.FATIGUE_RECOVERY.slow
+        tier = "slow"
+        if st.isResting    then table.insert(src, "rested area")     end
+        if st.isSitting    then table.insert(src, "sitting")         end
+        if st.nearCampfire then table.insert(src, "campfire")        end
+        if st.inHousing    then table.insert(src, "housing")         end
+        if isEatDrink      then table.insert(src, "eating/drinking") end
+    end
+
+    rates.fatigue             = rates.fatigue + gain
+    ICN2._fatigueRecoveryTier = tier
+    ICN2._fatigueRecoverySrc  = table.concat(src, ", ")
+end
+
+-- ── 7. Well Fed pause ─────────────────────────────────────────────────────────
+function ICN2:_ApplyWellFedPause(rates) -- if the Well Fed buff was refreshed within the last 5 minutes, pause hunger decay by zeroing out any negative hunger rate; does not affect thirst or fatigue
     if ICN2._wellFedPauseExpiry and GetTime() < ICN2._wellFedPauseExpiry then
-        dH = 0
+        if rates.hunger < 0 then rates.hunger = 0 end
     end
-
-    return {
-        hunger  = foodRecovery - dH,
-        thirst  = drinkRecovery - dT,
-        fatigue = fatigueGain - dF,
-    }
 end
 
--- ── Public function to get current rates ──────────────────────────────────────
-function ICN2:GetCurrentRates()
-    return calculateCurrentRates()
+-- ── GetCurrentRates — the single public entry point ───────────────────────────
+function ICN2:GetCurrentRates() -- calculates the current hunger/thirst/fatigue rates by applying all modifiers in sequence and returns a table with the final rates; also updates _lastRates for external access and debugging
+    local rates = { hunger = 0, thirst = 0, fatigue = 0 }
+
+    self:_ApplyBaseDecay(rates)
+    self:_ApplySituationModifiers(rates)
+    self:_ApplyRaceClassModifiers(rates)
+    self:_ApplyArmorModifier(rates)
+    self:_ApplyFoodDrinkRecovery(rates)
+    self:_ApplyFatigueRecovery(rates)
+    self:_ApplyWellFedPause(rates)
+
+    return rates
 end
 
--- ── Main decay tick ───────────────────────────────────────────────────────────
-local function tick()
+-- ══ SECTION 4 — Tick ═══════════════════════════════════════════════════════════
+local function clamp(v) -- utility function to clamp a value between 0 and 100
+    if v < 0   then return 0   end
+    if v > 100 then return 100 end
+    return v
+end
+
+local function tick() -- applies the current rates to the player's hunger/thirst/fatigue, clamps the values, updates the HUD, and triggers emotes based on thresholds
     local oldH = ICN2DB.hunger
     local oldT = ICN2DB.thirst
     local oldF = ICN2DB.fatigue
 
-    local rates = calculateCurrentRates()
+    local rates = ICN2:GetCurrentRates()
 
-    -- Hard clamp: min 0, max 100. The max guard prevents any fractional
-    -- overshoot (e.g. Well Fed firing mid-tick while eating).
-    ICN2DB.hunger  = math.max(0, math.min(100, ICN2DB.hunger  + rates.hunger))
-    ICN2DB.thirst  = math.max(0, math.min(100, ICN2DB.thirst  + rates.thirst))
-    ICN2DB.fatigue = math.max(0, math.min(100, ICN2DB.fatigue + rates.fatigue))
+    ICN2DB.hunger  = clamp(ICN2DB.hunger  + rates.hunger)
+    ICN2DB.thirst  = clamp(ICN2DB.thirst  + rates.thirst)
+    ICN2DB.fatigue = clamp(ICN2DB.fatigue + rates.fatigue)
 
     ICN2._lastRates = rates
 
@@ -329,26 +321,28 @@ local function tick()
     ICN2:CheckEmotes(oldH, oldT, oldF)
 end
 
--- ── Recovery ──────────────────────────────────────────────────────────────────
+-- ══ SECTION 5 ══════════════════════════════════════════════════════════════════
+-- Manual recovery (slash commands / options panel)
 function ICN2:Eat(amount)
-    ICN2DB.hunger = math.min(100, ICN2DB.hunger + (amount or 30))
+    ICN2DB.hunger = clamp(ICN2DB.hunger + (amount or 30))
     self:UpdateHUD()
     self:TriggerEmote("satisfied", "hunger")
 end
 
 function ICN2:Drink(amount)
-    ICN2DB.thirst = math.min(100, ICN2DB.thirst + (amount or 30))
+    ICN2DB.thirst = clamp(ICN2DB.thirst + (amount or 30))
     self:UpdateHUD()
     self:TriggerEmote("satisfied", "thirst")
 end
 
 function ICN2:Rest(amount)
-    ICN2DB.fatigue = math.min(100, ICN2DB.fatigue + (amount or 20))
+    ICN2DB.fatigue = clamp(ICN2DB.fatigue + (amount or 20))
     self:UpdateHUD()
     self:TriggerEmote("satisfied", "fatigue")
 end
 
--- ── Events ────────────────────────────────────────────────────────────────────
+-- ══ SECTION 6 — Events ═════════════════════════════════════════════════════════
+
 frame:RegisterEvent("ADDON_LOADED")
 frame:RegisterEvent("PLAYER_LOGIN")
 frame:RegisterEvent("PLAYER_LOGOUT")
@@ -358,7 +352,7 @@ frame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
 frame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 frame:RegisterEvent("UNIT_AURA")
 
-frame:SetScript("OnEvent", function(self, event, ...)
+frame:SetScript("OnEvent", function(self, event, ...) -- main event handler for addon lifecycle, combat state, equipment changes, spell casts, and aura updates
     if event == "ADDON_LOADED" then
         local name = ...
         if name == "ICN2" then
@@ -370,7 +364,6 @@ frame:SetScript("OnEvent", function(self, event, ...)
 
     elseif event == "PLAYER_LOGIN" then
         applyOfflineDecay()
-        -- Delay armor cache refresh by 1s to allow item data to arrive
         C_Timer.After(1, function() refreshArmorCache() end)
         ICN2:UpdateHUD()
 
@@ -378,19 +371,15 @@ frame:SetScript("OnEvent", function(self, event, ...)
         ICN2DB.lastLogout = time()
 
     elseif event == "PLAYER_REGEN_DISABLED" then
-        inCombat  = true
-        -- DetectFatigueRecovery will clear isSitting/nearCampfire on the next tick
-        -- because the inCombat guard fires first. No restStance to clear.
+        ICN2.State.inCombat = true
 
     elseif event == "PLAYER_REGEN_ENABLED" then
-        inCombat = false
+        ICN2.State.inCombat = false
         ICN2:OnCombatBreakFoodDrink()
 
     elseif event == "PLAYER_EQUIPMENT_CHANGED" then
         local slot = ...
-        if slot == 5 then
-            refreshArmorCache()
-        end
+        if slot == 5 then refreshArmorCache() end
 
     elseif event == "UNIT_AURA" then
         local unit = ...
@@ -403,93 +392,88 @@ frame:SetScript("OnEvent", function(self, event, ...)
 end)
 
 -- ── OnUpdate ──────────────────────────────────────────────────────────────────
-frame:SetScript("OnUpdate", function(self, dt)
+frame:SetScript("OnUpdate", function(self, dt) -- accumulates elapsed time and triggers a tick when the interval is reached; also calls UpdateState and stubs for future use
     elapsed = elapsed + dt
     if elapsed >= tickInterval then
         elapsed = 0
-        isSwimming = (IsSubmerged and IsSubmerged()) and true or false
-        ICN2:DetectFatigueRecovery()
-        ICN2:FoodDrinkTick()
-        ICN2:RestStanceTick()
+        ICN2:UpdateState()    -- refresh ICN2.State before the rate engine runs
+        ICN2:FoodDrinkTick()  -- stub; kept for future use
+        ICN2:RestStanceTick() -- stub; kept for future use
         tick()
     end
 end)
 
--- ── Fatigue recovery condition detection ─────────────────────────────────────
--- Called every tick. Updates the three module-local flags:
---   isSitting    — player has the sit/rest aura
---   nearCampfire — player has a campfire/cozy-fire buff
---   inHousing    — player is in a housing zone
-function ICN2:DetectFatigueRecovery()
-    -- Combat blocks all recovery. Mounting does NOT — you can be mounted
-    -- in a rested area and still recover. Sitting/eating won't fire while
-    -- mounted anyway since those actions dismount you.
-    if inCombat then
-        isSitting    = false
-        nearCampfire = false
-        -- Note: inHousing intentionally not cleared — the zone doesn't change
-        -- just because you enter combat.
-        return
-    end
+-- ── Stubs ─────────────────────────────────────────────────────────────────────
+function ICN2:RestStanceTick() end -- stub for future use; called each tick after UpdateState, currently does nothing
 
-    -- Scan player buffs once and check all patterns in one pass
-    local sitFound      = false
-    local campfireFound = false
-    local i = 1
-    while true do
-        local aura = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
-        if not aura then break end
-        local lower = aura.name and string.lower(aura.name) or ""
+-- ══ SECTION 7 — Racial / class ability recovery ════════════════════════════════
 
-        if not sitFound then
-            for _, p in ipairs(SIT_AURA_PATTERNS) do
-                if lower:find(p, 1, true) then sitFound = true; break end
-            end
-        end
-        if not campfireFound then
-            for _, p in ipairs(ICN2.CAMPFIRE_PATTERNS) do
-                if lower:find(p, 1, true) then campfireFound = true; break end
-            end
-        end
-        if sitFound and campfireFound then break end  -- no need to scan further
-        i = i + 1
-    end
-
-    isSitting    = sitFound
-    nearCampfire = campfireFound
-
-    -- Housing detection: campfire buff is the primary signal. Map ID is a belt-and-suspenders fallback.
-    local mapID = C_Map.GetBestMapForUnit("player")
-    inHousing = campfireFound or (mapID ~= nil and ICN2.HOUSING_MAP_IDS[mapID] == true)
-end
-
--- ── Fatigue stance tick (stub) ────────────────────────────────────────────────
-function ICN2:RestStanceTick()
-end
-
--- ── Racial / class ability recovery ──────────────────────────────────────────
 local ABILITY_RECOVERY = {
-    [20577]  = function() ICN2:Eat(40) end,
-    [108968] = function() ICN2:Drink(40) end,
-    [204065] = function() ICN2:Eat(10); ICN2:Rest(10) end,
-    [58984]  = function() ICN2:Rest(5) end,
+    [20577]  = function() ICN2:Eat(40)  end,   -- Cannibalize
+    [108968] = function() ICN2:Drink(40) end,  -- Symbiosis (water)
+    [204065] = function() ICN2:Eat(10); ICN2:Rest(10) end, -- Spirit Mend
+    [58984]  = function() ICN2:Rest(5)  end, -- Shadowmeld
 }
 
 function ICN2:HandleAbilityRecovery(spellID)
     if ABILITY_RECOVERY[spellID] then ABILITY_RECOVERY[spellID]() end
 end
 
--- ── /icn2 details ────────────────────────────────────────────────────────────
-function ICN2:PrintDetails()
+-- ══ SECTION 8 — /icn2 details ══════════════════════════════════════════════════
+local function getSituationLabels() -- generates a list of active situation labels with their corresponding modifiers for display in the /icn2 details output
+    local labels = {}
+    local sm = ICN2.SITUATION_MODIFIERS
+    local st = ICN2.State
+
+    if st.isResting then
+        table.insert(labels, string.format("resting (H×%.2f T×%.2f F×%.2f)",
+            sm.resting.hunger, sm.resting.thirst, sm.resting.fatigue))
+        return labels  -- resting is exclusive
+    end
+    if st.isMounted then
+        table.insert(labels, string.format("mounted (H×%.2f T×%.2f F×%.2f)",
+            sm.mounted.hunger, sm.mounted.thirst, sm.mounted.fatigue))
+    end
+    if st.isFlying then
+        table.insert(labels, string.format("flying (H×%.2f T×%.2f F×%.2f)",
+            sm.flying.hunger, sm.flying.thirst, sm.flying.fatigue))
+    end
+    if st.isSwimming then
+        table.insert(labels, string.format("swimming (H×%.2f T×%.2f F×%.2f)",
+            sm.swimming.hunger, sm.swimming.thirst, sm.swimming.fatigue))
+    end
+    if st.inCombat then
+        table.insert(labels, string.format("combat (H×%.2f T×%.2f F×%.2f)",
+            sm.combat.hunger, sm.combat.thirst, sm.combat.fatigue))
+    end
+    if st.isIndoors and not st.inCombat and not st.isMounted then
+        table.insert(labels, string.format("indoors (H×%.2f T×%.2f F×%.2f)",
+            sm.indoors.hunger, sm.indoors.thirst, sm.indoors.fatigue))
+    end
+
+    local race = select(2, UnitRace("player"))
+    local rm   = ICN2.RACE_MODIFIERS[race]
+    if rm then
+        table.insert(labels, string.format("race:%s (H×%.2f T×%.2f F×%.2f)",
+            race, rm.hunger, rm.thirst, rm.fatigue))
+    end
+
+    local _, class = UnitClass("player")
+    local cm = ICN2.CLASS_MODIFIERS[class]
+    if cm then
+        table.insert(labels, string.format("class:%s (H×%.2f T×%.2f F×%.2f)",
+            class, cm.hunger, cm.thirst, cm.fatigue))
+    end
+
+    return labels
+end
+
+function ICN2:PrintDetails() -- prints detailed information about the current rates, active modifiers, and recovery sources to the chat window for debugging and transparency; called by /icn2 details
     local s      = ICN2DB.settings
     local preset = ICN2.PRESETS[s.preset] or 1.0
-    local mH, mT, mF, situLabels = getSituationMultipliers(true)
-    local armor  = armorFatigueCache or ICN2.ARMOR_FATIGUE.CLOTH
     local rates  = ICN2:GetCurrentRates()
-
-    local dH = s.decayRates.hunger  * preset * mH
-    local dT = s.decayRates.thirst  * preset * mT
-    local dF = s.decayRates.fatigue * preset * mF * armor
+    local armor  = armorFatigueCache or ICN2.ARMOR_FATIGUE.CLOTH
+    local labels = getSituationLabels()
 
     local armorName = "CLOTH"
     if     armor == ICN2.ARMOR_FATIGUE.PLATE   then armorName = "PLATE"
@@ -497,7 +481,6 @@ function ICN2:PrintDetails()
     elseif armor == ICN2.ARMOR_FATIGUE.LEATHER then armorName = "LEATHER"
     end
 
-    -- Fatigue recovery gain from current tier
     local fatigueGain = (ICN2._fatigueRecoveryTier == "fast" and ICN2.FATIGUE_RECOVERY.fast)
                      or (ICN2._fatigueRecoveryTier == "slow" and ICN2.FATIGUE_RECOVERY.slow)
                      or 0
@@ -505,26 +488,27 @@ function ICN2:PrintDetails()
     local P   = "|cFFFF6600ICN2|r"
     local sep = "|cFF555555--------------------------------|r"
 
-    print(P .. " |cFFFFFF00Details|r — preset: " .. s.preset .. string.format(" (x%.2f)", preset))
+    print(P .. " |cFFFFFF00Details|r — preset: " .. s.preset .. string.format(" (×%.2f)", preset))
     print(sep)
     print(string.format(P .. " |cFF00FF00Hunger|r  %.1f%%  net %+.4f%%/s",  ICN2DB.hunger,  rates.hunger))
     print(string.format(P .. " |cFF4499FFThirst|r  %.1f%%  net %+.4f%%/s",  ICN2DB.thirst,  rates.thirst))
     print(string.format(P .. " |cFFFFDD00Fatigue|r %.1f%%  net %+.4f%%/s  (recovery %+.4f/s [%s])",
         ICN2DB.fatigue, rates.fatigue, fatigueGain, ICN2._fatigueRecoveryTier))
     print(sep)
-    print(P .. " |cFFAAAAAASituation modifiers:|r")
-    if #situLabels == 0 then
+    print(P .. " |cFFAAAAAAActive modifiers:|r")
+    if #labels == 0 then
         print("  |cFF888888none (walking/idle outdoors)|r")
     else
-        for _, lbl in ipairs(situLabels) do print("  |cFFCCCCCC" .. lbl .. "|r") end
+        for _, lbl in ipairs(labels) do print("  |cFFCCCCCC" .. lbl .. "|r") end
     end
-    print(string.format("  |cFFCCCCCCarmor:%s (F x%.2f)|r", armorName, armor))
+    print(string.format("  |cFFCCCCCCarmor:%s (F×%.2f)|r", armorName, armor))
     if ICN2._fatigueRecoveryTier ~= "none" then
         print(string.format("  |cFFCCCCCCfatigue recovery: %s — sources: %s|r",
-            ICN2._fatigueRecoveryTier, ICN2._fatigueRecoverySrc ~= "" and ICN2._fatigueRecoverySrc or "n/a"))
+            ICN2._fatigueRecoveryTier,
+            ICN2._fatigueRecoverySrc ~= "" and ICN2._fatigueRecoverySrc or "n/a"))
     end
     print(sep)
-    if ICN2:IsEating()   then
+    if ICN2:IsEating() then
         print(string.format(P .. " |cFF00FF00Currently eating|r  (tier: %s)", ICN2:GetFoodTier()))
     end
     if ICN2:IsDrinking() then
@@ -537,9 +521,9 @@ function ICN2:PrintDetails()
     end
 end
 
--- ── Slash commands ────────────────────────────────────────────────────────────
+-- ══ SECTION 9 — Slash commands ═════════════════════════════════════════════════
 SLASH_ICN21 = "/icn2"
-SlashCmdList["ICN2"] = function(msg)
+SlashCmdList["ICN2"] = function(msg) -- handles slash commands for showing the options panel, manually eating/drinking/resting, resetting needs, etc, called when the user types /icn2 followed by a command
     msg = msg:lower():trim()
     if msg == "show" or msg == "" then
         ICN2:ToggleOptions()
@@ -551,7 +535,16 @@ SlashCmdList["ICN2"] = function(msg)
         ICN2:Rest(40); print("|cFFFF6600ICN2|r You rest. Fatigue restored.")
     elseif msg == "reset" then
         ICN2DB.hunger = 100; ICN2DB.thirst = 100; ICN2DB.fatigue = 100
-        ICN2:UpdateHUD(); print("|cFFFF6600ICN2|r Needs reset to 100%%.")
+        ICN2:UpdateHUD(); print("|cFFFF6600ICN2|r Needs reset to 100%.")
+    elseif msg == "starve" then
+        ICN2DB.hunger = 0; ICN2:UpdateHUD()
+        print("|cFFFF6600ICN2|r |cFF00FF00Hunger|r set to 0%.")
+    elseif msg == "dehydrate" then
+        ICN2DB.thirst = 0; ICN2:UpdateHUD()
+        print("|cFFFF6600ICN2|r |cFF4499FFThirst|r set to 0%.")
+    elseif msg == "exhaust" then
+        ICN2DB.fatigue = 0; ICN2:UpdateHUD()
+        print("|cFFFF6600ICN2|r |cFFFFDD00Fatigue|r set to 0%.")
     elseif msg == "status" then
         print(string.format("|cFFFF6600ICN2|r Hunger: |cFF00FF00%.1f%%|r  Thirst: |cFF4499FF%.1f%%|r  Fatigue: |cFFFFDD00%.1f%%|r",
             ICN2DB.hunger, ICN2DB.thirst, ICN2DB.fatigue))
@@ -566,6 +559,7 @@ SlashCmdList["ICN2"] = function(msg)
         ICN2:LockHUD(ICN2DB.settings.hudLocked)
         print("|cFFFF6600ICN2|r HUD " .. (ICN2DB.settings.hudLocked and "|cFFFF0000locked|r" or "|cFF00FF00unlocked|r"))
     else
-        print("|cFFFF6600ICN2|r Commands: |cFFFFFF00/icn2|r [show|eat|drink|rest|reset|status|details|hud|lock]")
+        print("|cFFFF6600ICN2|r Commands: |cFFFFFF00/icn2|r [show|eat|drink|rest|reset|starve|dehydrate|exhaust|status|details|hud|lock]")
     end
 end
+    

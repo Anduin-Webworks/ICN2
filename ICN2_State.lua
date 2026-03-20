@@ -32,14 +32,7 @@ ICN2.State = {
     inHousing   = false,  -- player is in a housing zone/plot
 }
 
--- ── Why GetUnitStandState for sitting? ───────────────────────────────────────
--- UnitIsSitting("player") was removed in Retail 12.0 (TWW pre-patch).
--- The aura-based approach ("Restful" buff) proved unreliable in testing —
--- the buff does not consistently appear on /sit in outdoor zones.
--- GetUnitStandState("player") returns a numeric stance:
---   0 = standing, 1 = sitting, 2 = laying down, 3 = kneeling
--- Values > 0 mean the player is not standing = effectively sitting/resting.
-local STAND_STATE_STANDING = 0
+local SIT_AURA_PATTERNS = { "restful", "resting", "sitting" }
 
 -- ── UpdateState ───────────────────────────────────────────────────────────────
 function ICN2:UpdateState()
@@ -55,32 +48,51 @@ function ICN2:UpdateState()
     s.isIndoors  = IsIndoors()  and true or false
 
     -- ── Aura-based detection (sitting + campfire) ─────────────────────────────
-    -- Combat clears sitting/campfire — you can't do those while fighting.
+    -- Two guards before the scan:
+    --   1. s.inCombat  — set by PLAYER_REGEN_DISABLED event (zero latency)
+    --   2. UnitAffectingCombat — covers the rare window where encounter auras
+    --      arrive via UNIT_AURA before PLAYER_REGEN_DISABLED fires. Boss/combat
+    --      auras in that window have tainted secret names; calling string.lower()
+    --      on them throws "attempt to perform string conversion on a secret string".
     -- inHousing is intentionally NOT cleared on combat; the zone is unchanged.
-    if s.inCombat then
+    if s.inCombat or UnitAffectingCombat("player") then
         s.isSitting    = false
         s.nearCampfire = false
         return
     end
 
-    -- ── Sitting detection ─────────────────────────────────────────────────────
-    -- GetUnitStandState returns 0 for standing, >0 for sit/lay/kneel.
-    local standState = GetUnitStandState and GetUnitStandState("player") or STAND_STATE_STANDING
-    s.isSitting = standState ~= STAND_STATE_STANDING
-
-    -- ── Campfire detection ────────────────────────────────────────────────────
+    local sitFound      = false
     local campfireFound = false
     local i = 1
     while true do
         local aura = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
         if not aura then break end
-        local lower = aura.name and string.lower(aura.name) or ""
-        for _, p in ipairs(ICN2.CAMPFIRE_PATTERNS) do
-            if lower:find(p, 1, true) then campfireFound = true; break end
+
+        -- pcall guards against any remaining tainted aura names that slip
+        -- past the combat check (e.g. from a previous frame's residual state).
+        local ok, lower = pcall(function()
+            return aura.name and string.lower(aura.name) or ""
+        end)
+        if not ok then
+            -- Name is tainted (secret string). Skip this aura safely.
+            i = i + 1
+        else
+            if not sitFound then
+                for _, p in ipairs(SIT_AURA_PATTERNS) do
+                    if lower:find(p, 1, true) then sitFound = true; break end
+                end
+            end
+            if not campfireFound then
+                for _, p in ipairs(ICN2.CAMPFIRE_PATTERNS) do
+                    if lower:find(p, 1, true) then campfireFound = true; break end
+                end
+            end
+            if sitFound and campfireFound then break end
+            i = i + 1
         end
-        if campfireFound then break end
-        i = i + 1
     end
+
+    s.isSitting    = sitFound
     s.nearCampfire = campfireFound
 
     -- Housing: campfire buff is the primary signal. Map ID is a belt-and-suspenders fallback.

@@ -138,16 +138,15 @@ function ICN2:BuildOptions()
 
     UIDropDownMenu_Initialize(themeDropdown, function(self, level)
         for _, t in ipairs(THEMES) do
-            local info      = UIDropDownMenu_CreateInfo()
-            info.text       = t.label
-            info.value      = t.id
-            info.checked    = (ICN2DB.settings.barTheme or "smooth") == t.id
-            info.disabled   = false
-            info.func       = function(btn)
-                UIDropDownMenu_SetSelectedValue(themeDropdown, btn.value)
-                UIDropDownMenu_SetText(themeDropdown, btn:GetText())
+            local info   = UIDropDownMenu_CreateInfo()
+            local themeId = t.id   -- capture per-iteration for the closure
+            info.text    = t.label
+            info.value   = themeId
+            info.checked = (ICN2DB.settings.barTheme or "smooth") == themeId
+            info.func    = function()
+                UIDropDownMenu_SetText(themeDropdown, t.label)
                 CloseDropDownMenus()
-                ICN2:SetBarTheme(btn.value)
+                ICN2:SetBarTheme(themeId)
             end
             UIDropDownMenu_AddButton(info, level)
         end

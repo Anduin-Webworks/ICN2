@@ -163,7 +163,8 @@ ICN2.HUD_THEMES = {
             edgeTop       = nil, edgeBottom = nil,
             edgeLeft      = "Necrolord-NineSlice-CornerBottomLeft", edgeRight  = "Necrolord-NineSlice-CornerBottomRight",
             titleStrip    = "UI-Frame-Necrolord-Ribbon",
-            cornerSize    = 8, edgeThickness = 4,
+            cornerSize    = 8,
+            edgeThickness = 4,
         },
         bar = {
             bg      = { 0.06, 0.06, 0.06, 0.98 },

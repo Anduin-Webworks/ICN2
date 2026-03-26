@@ -196,8 +196,8 @@ ICN2.ARMOR_FATIGUE = {
 -- hardest need to recover, requiring deliberate downtime and helps with
 -- taking IRL rest time on longer play sessions.
 ICN2.FATIGUE_RECOVERY = {
-    slow = 100 / 300,   -- 0.333% per second → full bar in ~5 minutes
-    fast = 100 / 120,   -- 0.833% per second → full bar in ~2 minutes
+    slow = 100 / 600,   -- 0.333% per second → full bar in ~10 minutes
+    fast = 100 / 300,   -- 0.833% per second → full bar in ~5 minutes
 }
 
 -- ── Aura patterns for campfire / cozy fire detection ─────────────────────────

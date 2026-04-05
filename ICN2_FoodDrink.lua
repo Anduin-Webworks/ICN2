@@ -64,10 +64,9 @@ local drinkState = { active = false, startTime = nil, duration = nil, tier = nil
 -- to persist across UI reloads. Initialized in ICN2_Core.lua's initDB().
 
 -- ── Aura name patterns ────────────────────────────────────────────────────────
--- Patterns used to identify different types of food/drink auras by name
-local FOOD_AURA_PATTERNS   = { "food", "refreshment", "eating" }
-local DRINK_AURA_PATTERNS  = { "drink", "drinking", "hydration" }
-local DRINK_EXTRA_PATTERNS = { "conjured water", "mana tea", "morning glory" }  -- Special drink types
+local FOOD_AURA_PATTERNS   = { "food", "refreshment", "eating" }  -- No ^ anchor - these are safe
+local DRINK_AURA_PATTERNS  = { "^drink", "^drinking", "hydration" }  -- ^ anchor to avoid false matches
+local DRINK_EXTRA_PATTERNS = { "conjured water", "mana tea", "morning glory" }
 local WELLFED_PATTERNS     = { "well fed" }
 local FEAST_NAME_PATTERNS  = { "feast", "banquet", "spread", "bountiful" }
 
@@ -76,11 +75,19 @@ local FEAST_NAME_PATTERNS  = { "feast", "banquet", "spread", "bountiful" }
 -- @param name: The aura name to check
 -- @param patterns: Array of pattern strings to match against
 -- @return: true if any pattern matches, false otherwise
+-- Updated matchesAny() with nil guard
 local function matchesAny(name, patterns)
-    if not name then return false end
+    if not name or not patterns then return false end  -- Added patterns check
     local lower = string.lower(name)
     for _, p in ipairs(patterns) do
-        if lower:find(p, 1, true) then return true end
+        -- If pattern starts with ^, match only at beginning of string
+        if p:sub(1,1) == "^" then
+            local pat = p:sub(2)  -- Remove the ^
+            if lower:sub(1, #pat) == pat then return true end
+        else
+            -- Otherwise substring match as before
+            if lower:find(p, 1, true) then return true end
+        end
     end
     return false
 end
@@ -90,6 +97,7 @@ end
 -- @param extraPatterns: Optional additional patterns to check
 -- @return: The first matching aura data table, or nil if none found
 local function findAura(patterns, extraPatterns)
+    if not patterns then return nil end  -- Guard against nil patterns
     local i = 1
     while true do
         local aura = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")

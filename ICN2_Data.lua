@@ -7,12 +7,13 @@ ICN2 = ICN2 or {}  -- Safely initialize the global ICN2 table to avoid overwriti
 
 -- ── Default SavedVariables structure ──────────────────────────────────────────
 ICN2.DEFAULTS = {
-    hunger  = 100.0,   -- stored in race-specific points (0–maxValue); Human baseline = 100
+    hunger  = 100.0,   -- stored in race-specific points (0–maxValue); baseline = 100
     thirst  = 100.0,
     fatigue = 100.0,
     lastLogout = nil,  -- timestamp via time()
     wellFedEligible = true,  -- v1.8.1: eligibility flag for Well Fed hunger pause
 
+    
     settings = {
         -- "fast" | "medium" | "slow" | "realistic" | "custom"
         preset = "medium",
@@ -27,14 +28,12 @@ ICN2.DEFAULTS = {
         -- Bumped when customDecayBias scale changes; used for one-time migration from old saves.
         customDecayBiasVersion = 2,
 
-        -- Decay per real-time second (% lost per second) at medium preset (multiplier = 1.0)
-        -- hunger/thirst: 100% in 30 min  → 100 / (30×60) ≈ 0.05556% per second
-        -- fatigue:       100% in 60 min  → 100 / (60×60) ≈ 0.02778% per second
+        -- Decay per real-time second at medium preset (multiplier = 1.0)
         -- Situational and race/class multipliers are applied on top of these base values.
         decayRates = {
-            hunger  = 0.05556,
-            thirst  = 0.05556,
-            fatigue = 0.02778,
+            hunger  = 0.0278,  -- 50 pts in 30 min at 1.0×
+            thirst  = 0.0278,
+            fatigue = 0.0167,  -- 30 pts in 30 min
         },
 
         -- HUD
@@ -67,15 +66,15 @@ ICN2.DEFAULTS = {
 -- ── Preset multipliers (applied to base decay) ────────────────────────────────
 -- Multipliers for decay rates: higher values mean faster decay (needs deplete quicker).
 ICN2.PRESETS = {
-    fast      = 3.0,
-    medium    = 1.0,
-    slow      = 0.5,
-    realistic = 0.15,
-    custom    = 1.0  -- user sets their own rates directly
+    fast      = 2.00,   -- doubled
+    medium    = 1.00,   -- new baseline
+    slow      = 0.20,   -- 5× slower than medium
+    realistic = 0.02,   -- 50× slower than medium
+    custom    = 1.00
 }
 
--- Custom sliders: 0 = no passive decay; max = 10 × Fast (×3) = ×30 vs Medium base.
-ICN2.CUSTOM_DECAY_MULTIPLIER_MAX = 10 * ICN2.PRESETS.fast
+-- Custom sliders: 0 = no passive decay;
+ICN2.CUSTOM_DECAY_MULTIPLIER_MAX = 20 * ICN2.PRESETS.medium
 
 -- ── Situational decay multipliers ─────────────────────────────────────────────
 -- These modify the decay rate based on the player's current activity.

@@ -197,6 +197,126 @@ local function getSettings()
     }
 end
 
+-- ── Rate calculation pipeline breakdown ──────────────────────────────────────
+-- Captures the rates table after each modifier step in GetCurrentRates().
+-- This shows exactly how each modifier layer affects the final net rates.
+-- @return: Table with rates snapshot after each pipeline step
+local function getRatePipeline()
+    if not ICN2.GetCurrentRates then return { error = "GetCurrentRates not available" } end
+    
+    -- We'll intercept each step by calling the modifiers manually
+    local pipeline = {}
+    local rates = { hunger = 0, thirst = 0, fatigue = 0 }
+    
+    -- Helper to deep copy rates for snapshot
+    local function snapshot(label)
+        pipeline[label] = {
+            hunger  = rates.hunger,
+            thirst  = rates.thirst,
+            fatigue = rates.fatigue,
+        }
+    end
+    
+    snapshot("0_initial")
+    
+    if ICN2._ApplyBaseDecay then
+        ICN2:_ApplyBaseDecay(rates)
+        snapshot("1_base_decay")
+    end
+    
+    if ICN2._ApplySituationModifiers then
+        ICN2:_ApplySituationModifiers(rates)
+        snapshot("2_situation_modifiers")
+    end
+    
+    if ICN2._ApplyRaceClassModifiers then
+        ICN2:_ApplyRaceClassModifiers(rates)
+        snapshot("3_race_class_modifiers")
+    end
+    
+    if ICN2._ApplySelfModifiers then
+        ICN2:_ApplySelfModifiers(rates)
+        snapshot("4_self_modifiers")
+    end
+    
+    if ICN2._ApplyCrossNeedModifiers then
+        ICN2:_ApplyCrossNeedModifiers(rates)
+        snapshot("5_cross_need_modifiers")
+    end
+    
+    if ICN2._ApplyArmorModifier then
+        ICN2:_ApplyArmorModifier(rates)
+        snapshot("6_armor_modifier")
+    end
+    
+    if ICN2._ApplyFoodDrinkRecovery then
+        ICN2:_ApplyFoodDrinkRecovery(rates)
+        snapshot("7_food_drink_recovery")
+    end
+    
+    if ICN2._ApplyFatigueRecovery then
+        ICN2:_ApplyFatigueRecovery(rates)
+        snapshot("8_fatigue_recovery")
+    end
+    
+    if ICN2._ApplyWellFedPause then
+        ICN2:_ApplyWellFedPause(rates)
+        snapshot("9_well_fed_pause")
+    end
+    
+    snapshot("10_final")
+    
+    return pipeline
+end
+
+-- ── Depletion rate calculations ───────────────────────────────────────────────
+-- Calculates how long it will take to deplete needs under current conditions.
+-- All calculations use net rates (decay minus recovery) for accuracy.
+-- @param rates: Current rates table from GetCurrentRates (pts/sec)
+-- @return: Table with per-minute, per-hour rates and time-to-deplete estimates
+local function getDepletionRates(rates)
+    local current = {
+        hunger  = ICN2DB and ICN2DB.hunger  or 0,
+        thirst  = ICN2DB and ICN2DB.thirst  or 0,
+        fatigue = ICN2DB and ICN2DB.fatigue or 0,
+    }
+    
+    local maxVals = {
+        hunger  = ICN2.GetMaxValue and ICN2:GetMaxValue("hunger")  or 100,
+        thirst  = ICN2.GetMaxValue and ICN2:GetMaxValue("thirst")  or 100,
+        fatigue = ICN2.GetMaxValue and ICN2:GetMaxValue("fatigue") or 100,
+    }
+    
+    -- Helper: calculate time to deplete in minutes (returns nil for zero/positive rates)
+    local function timeToDeplete(currentPts, rate)
+        if rate >= 0 then return nil end  -- Stable or recovering
+        return math.abs(currentPts / rate) / 60  -- Convert seconds to minutes
+    end
+    
+    return {
+        per_minute = {
+            hunger  = rates.hunger  * 60,
+            thirst  = rates.thirst  * 60,
+            fatigue = rates.fatigue * 60,
+        },
+        per_hour = {
+            hunger  = rates.hunger  * 3600,
+            thirst  = rates.thirst  * 3600,
+            fatigue = rates.fatigue * 3600,
+        },
+        time_to_deplete_current = {
+            hunger  = timeToDeplete(current.hunger,  rates.hunger),
+            thirst  = timeToDeplete(current.thirst,  rates.thirst),
+            fatigue = timeToDeplete(current.fatigue, rates.fatigue),
+        },
+        time_to_deplete_full = {
+            hunger  = timeToDeplete(maxVals.hunger,  rates.hunger),
+            thirst  = timeToDeplete(maxVals.thirst,  rates.thirst),
+            fatigue = timeToDeplete(maxVals.fatigue, rates.fatigue),
+        },
+    }
+end
+
 -- ── Build the full snapshot table ─────────────────────────────────────────────
 -- Assembles all debug information into a single table structure.
 -- This includes current needs, rates, state flags, modifiers, and settings.
@@ -220,6 +340,10 @@ local function buildSnapshot()
             thirst  = rates.thirst,
             fatigue = rates.fatigue,
         },
+
+        rate_calculation_pipeline = getRatePipeline(),
+
+        depletion_rate = getDepletionRates(rates),
 
         state = {
             inCombat    = st.inCombat    or false,
@@ -317,7 +441,7 @@ local function serialize(val, indent)
             local lines = {}
             for _, k in ipairs(keys) do
                 local v = val[k]
-                if type(v) ~= "function" then
+                if type(v) ~= "function" and type(v) ~= "userdata" then
                     lines[#lines + 1] = pad2 .. '"' .. k .. '": ' .. serialize(v, indent + 1)
                 end
             end

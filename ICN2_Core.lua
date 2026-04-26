@@ -122,7 +122,7 @@ local function initDB() -- initializes the saved variable database, applying def
         ICN2DB.thirst  = math.max(0, math.min(maxT, (ICN2DB.thirst  / 100) * maxT))
         ICN2DB.fatigue = math.max(0, math.min(maxF, (ICN2DB.fatigue / 100) * maxF))
         ICN2DB.settings.needsPointVersion = 1
-        print(ICN2:L("MSG_NEEDS_MIGRATED"))
+        print("|cFFFF6600ICN2|r Needs migrated to point-based system.")
     end
 end
 
@@ -504,7 +504,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
             initDB()
             ICN2:BuildHUD()
             ICN2:BuildOptions()
-            print(ICN2:L("MSG_LOADED"))
+            print("|cFFFF6600ICN2|r loaded. Type |cFFFFFF00/icn2|r for options.")
         end
 
     elseif event == "PLAYER_LOGIN" then
@@ -573,48 +573,48 @@ local function getSituationLabels() -- generates a list of active situation labe
 
     -- Show instance status prominently if active
     if st.inInstance then
-        table.insert(labels, ICN2:L("DETAILS_INSTANCE",
+        table.insert(labels, string.format("|cFFFF9900Instance|r (H×%.2f T×%.2f F×%.2f) — aura scanning disabled",
             sm.instance.hunger, sm.instance.thirst, sm.instance.fatigue))
         return labels  -- Instance mode overrides all other situational displays
     end
 
     if st.isResting then
-        table.insert(labels, ICN2:L("SITUATION_RESTING",
+        table.insert(labels, string.format("Resting (H×%.2f T×%.2f F×%.2f)",
             sm.resting.hunger, sm.resting.thirst, sm.resting.fatigue))
         return labels  -- resting is exclusive
     end
     if st.isMounted then
-        table.insert(labels, ICN2:L("SITUATION_MOUNTED",
+        table.insert(labels, string.format("Mounted (H×%.2f T×%.2f F×%.2f)",
             sm.mounted.hunger, sm.mounted.thirst, sm.mounted.fatigue))
     end
     if st.isFlying then
-        table.insert(labels, ICN2:L("SITUATION_FLYING",
+        table.insert(labels, string.format("Flying (H×%.2f T×%.2f F×%.2f)",
             sm.flying.hunger, sm.flying.thirst, sm.flying.fatigue))
     end
     if st.isSwimming then
-        table.insert(labels, ICN2:L("SITUATION_SWIMMING",
+        table.insert(labels, string.format("Swimming (H×%.2f T×%.2f F×%.2f)",
             sm.swimming.hunger, sm.swimming.thirst, sm.swimming.fatigue))
     end
     if st.inCombat then
-        table.insert(labels, ICN2:L("SITUATION_COMBAT",
+        table.insert(labels, string.format("Combat (H×%.2f T×%.2f F×%.2f)",
             sm.combat.hunger, sm.combat.thirst, sm.combat.fatigue))
     end
     if st.isIndoors and not st.inCombat and not st.isMounted then
-        table.insert(labels, ICN2:L("SITUATION_INDOORS",
+        table.insert(labels, string.format("Indoors (H×%.2f T×%.2f F×%.2f)",
             sm.indoors.hunger, sm.indoors.thirst, sm.indoors.fatigue))
     end
 
     local race = select(2, UnitRace("player"))
     local rm   = ICN2.RACE_MODIFIERS[race]
     if rm then
-        table.insert(labels, ICN2:L("SITUATION_RACE",
+        table.insert(labels, string.format("Race:%s (H×%.2f T×%.2f F×%.2f)",
             race, rm.hunger, rm.thirst, rm.fatigue))
     end
 
     local _, class = UnitClass("player")
     local cm = ICN2.CLASS_MODIFIERS[class]
     if cm then
-        table.insert(labels, ICN2:L("SITUATION_CLASS",
+        table.insert(labels, string.format("Class:%s (H×%.2f T×%.2f F×%.2f)",
             class, cm.hunger, cm.thirst, cm.fatigue))
     end
 
@@ -622,7 +622,6 @@ local function getSituationLabels() -- generates a list of active situation labe
 end
 
 function ICN2:PrintDetails() -- prints detailed information about the current rates, active modifiers, and recovery sources to the chat window for debugging and transparency; called by /icn2 details
-    local L = ICN2.L
     local s = ICN2DB.settings
     local mh = ICN2:GetEffectiveDecayMultiplier("hunger")
     local mt = ICN2:GetEffectiveDecayMultiplier("thirst")
@@ -637,58 +636,70 @@ function ICN2:PrintDetails() -- prints detailed information about the current ra
     elseif armor == ICN2.ARMOR_FATIGUE.LEATHER then armorName = "LEATHER"
     end
 
+    local maxF       = ICN2:GetMaxValue("fatigue")
     local fatigueGain = ((ICN2._fatigueRecoveryTier == "fast" and ICN2.FATIGUE_RECOVERY.fast)
                       or (ICN2._fatigueRecoveryTier == "slow" and ICN2.FATIGUE_RECOVERY.slow)
                       or 0)  -- Already in points/sec, no scaling needed
 
-    local sep = L["DETAILS_SEPARATOR"]
+    local P   = "|cFFFF6600ICN2|r"
+    local sep = "|cFF555555--------------------------------|r"
 
     local presetLine
     if s.preset == "custom" then
-        presetLine = ICN2:L("DETAILS_CUSTOM", mh, mt, mf)
+        local function pbPrint(cb, key)
+            if not cb or cb[key] == nil then return 1 end
+            return math.floor(cb[key])
+        end
+        presetLine = string.format(
+            "Custom — H×%.2f  T×%.2f  F×%.2f",
+            mh, mt, mf,
+            pbPrint(s.customDecayBias, "hunger"),
+            pbPrint(s.customDecayBias, "thirst"),
+            pbPrint(s.customDecayBias, "fatigue")
+        )
     else
         local dispBias = ICN2:PresetMultiplierToBiasDisplay(ICN2.PRESETS[s.preset] or 1.0)
-        presetLine = ICN2:L("DETAILS_PRESET",
+        presetLine = string.format("%s (global ×%.2f — slider display %d on 0–%d scale)",
             s.preset, ICN2.PRESETS[s.preset] or 1.0,
             dispBias,
             ICN2.CUSTOM_DECAY_MULTIPLIER_MAX or 30)
     end
-    print(ICN2:L("DETAILS_TITLE", presetLine))
+    print(P .. " |cFFFFFF00Details|r — " .. presetLine)
     print(sep)
-    print(ICN2:L("DETAILS_HUNGER_LINE",
-        ICN2:GetNeedPercent("hunger"), ICN2DB.hunger, ICN2:GetMaxValue("hunger"), rates.hunger))
-    print(ICN2:L("DETAILS_THIRST_LINE",
-        ICN2:GetNeedPercent("thirst"), ICN2DB.thirst, ICN2:GetMaxValue("thirst"), rates.thirst))
-    print(ICN2:L("DETAILS_FATIGUE_LINE",
+    print(string.format(P .. " |cFF00FF00Hunger|r  %.1f%%  (%.1f / %d pts)  net %+.4f pts/s",
+        ICN2:GetNeedPercent("hunger"),  ICN2DB.hunger,  ICN2:GetMaxValue("hunger"),  rates.hunger))
+    print(string.format(P .. " |cFF4499FFThirst|r  %.1f%%  (%.1f / %d pts)  net %+.4f pts/s",
+        ICN2:GetNeedPercent("thirst"),  ICN2DB.thirst,  ICN2:GetMaxValue("thirst"),  rates.thirst))
+    print(string.format(P .. " |cFFFFDD00Fatigue|r %.1f%%  (%.1f / %d pts)  net %+.4f pts/s  (recovery %+.4f pts/s [%s])",
         ICN2:GetNeedPercent("fatigue"), ICN2DB.fatigue, ICN2:GetMaxValue("fatigue"), rates.fatigue, fatigueGain, ICN2._fatigueRecoveryTier))
     print(sep)
-    print(L["DETAILS_MODIFIERS"])
+    print(P .. " |cFFAAAAAAActive modifiers:|r")
     if #labels == 0 then
-        print(L["DETAILS_NONE"])
+        print("  |cFF888888None (walking/idle outdoors)|r")
     else
         for _, lbl in ipairs(labels) do print("  |cFFCCCCCC" .. lbl .. "|r") end
     end
-    print(ICN2:L("DETAILS_ARMOR", armorName, armor))
+    print(string.format("  |cFFCCCCCCArmor:%s (F×%.2f)|r", armorName, armor))
     if ICN2._fatigueRecoveryTier ~= "none" then
-        print(ICN2:L("DETAILS_FATIGUE_RECOVERY",
+        print(string.format("  |cFFCCCCCCFatigue recovery: %s — sources: %s|r",
             ICN2._fatigueRecoveryTier,
             ICN2._fatigueRecoverySrc ~= "" and ICN2._fatigueRecoverySrc or "n/a"))
     end
     if ICN2._crossNeedActive and #ICN2._crossNeedActive > 0 then
-        print(ICN2:L("DETAILS_CROSS_NEED",
+        print(string.format("  |cFFFF9900Cross-need: %s|r",
             table.concat(ICN2._crossNeedActive, ", ")))
     end
     print(sep)
     if ICN2:IsEating() then
-        print(ICN2:L("DETAILS_EATING", ICN2:GetFoodTier()))
+        print(string.format(P .. " |cFF00FF00Currently eating|r  (tier: %s)", ICN2:GetFoodTier()))
     end
     if ICN2:IsDrinking() then
-        print(ICN2:L("DETAILS_DRINKING", ICN2:GetDrinkTier()))
+        print(string.format(P .. " |cFF4499FFCurrently drinking|r (tier: %s)", ICN2:GetDrinkTier()))
     end
     local wfExpiry = ICN2._wellFedPauseExpiry or 0
     if wfExpiry > 0 and GetTime() < wfExpiry then
         local remaining = math.ceil(wfExpiry - GetTime())
-        print(ICN2:L("DETAILS_WELL_FED", remaining))
+        print(string.format(P .. " |cFF00FF00Well Fed|r — hunger decay paused (%ds remaining)", remaining))
     end
 end
 
@@ -699,40 +710,40 @@ SlashCmdList["ICN2"] = function(msg) -- handles slash commands for showing the o
     if msg == "show" or msg == "" then
         ICN2:ToggleOptions()
     elseif msg == "eat" then
-        ICN2:Eat(50); print(ICN2:L("MSG_EAT"))
+        ICN2:Eat(50); print("|cFFFF6600ICN2|r You eat something. Hunger restored.")
     elseif msg == "drink" then
-        ICN2:Drink(50); print(ICN2:L("MSG_DRINK"))
+        ICN2:Drink(50); print("|cFFFF6600ICN2|r You drink something. Thirst restored.")
     elseif msg == "rest" then
-        ICN2:Rest(40); print(ICN2:L("MSG_REST"))
+        ICN2:Rest(40); print("|cFFFF6600ICN2|r You rest. Fatigue restored.")
     elseif msg == "reset" then
         ICN2DB.hunger  = ICN2:GetMaxValue("hunger")
         ICN2DB.thirst  = ICN2:GetMaxValue("thirst")
         ICN2DB.fatigue = ICN2:GetMaxValue("fatigue")
-        ICN2:UpdateHUD(); print(ICN2:L("MSG_RESET"))
+        ICN2:UpdateHUD(); print("|cFFFF6600ICN2|r Needs reset to 100%.")
     elseif msg == "starve" then
         ICN2DB.hunger = 0; ICN2:UpdateHUD()
-        print(ICN2:L("MSG_STARVE"))
+        print("|cFFFF6600ICN2|r |cFF00FF00Hunger|r set to 0%.")
     elseif msg == "dehydrate" then
         ICN2DB.thirst = 0; ICN2:UpdateHUD()
-        print(ICN2:L("MSG_DEHYDRATE"))
+        print("|cFFFF6600ICN2|r |cFF4499FFThirst|r set to 0%.")
     elseif msg == "exhaust" then
         ICN2DB.fatigue = 0; ICN2:UpdateHUD()
-        print(ICN2:L("MSG_EXHAUST"))
+        print("|cFFFF6600ICN2|r |cFFFFDD00Fatigue|r set to 0%.")
     elseif msg == "status" then
-        print(ICN2:L("MSG_STATUS",
+        print(string.format("|cFFFF6600ICN2|r Hunger: |cFF00FF00%.1f%%|r  Thirst: |cFF4499FF%.1f%%|r  Fatigue: |cFFFFDD00%.1f%%|r",
             ICN2:GetNeedPercent("hunger"), ICN2:GetNeedPercent("thirst"), ICN2:GetNeedPercent("fatigue")))
     elseif msg == "details" then
         ICN2:PrintDetails()
     elseif msg == "hud" then
         ICN2DB.settings.hudEnabled = not ICN2DB.settings.hudEnabled
         ICN2:UpdateHUD()
-        print(ICN2DB.settings.hudEnabled and ICN2:L("MSG_HUD_ENABLED") or ICN2:L("MSG_HUD_DISABLED"))
+        print("|cFFFF6600ICN2|r HUD " .. (ICN2DB.settings.hudEnabled and "|cFF00FF00enabled|r" or "|cFFFF0000disabled|r"))
     elseif msg == "lock" then
         ICN2DB.settings.hudLocked = not ICN2DB.settings.hudLocked
         ICN2:LockHUD(ICN2DB.settings.hudLocked)
-        print(ICN2DB.settings.hudLocked and ICN2:L("MSG_HUD_LOCKED") or ICN2:L("MSG_HUD_UNLOCKED"))
+        print("|cFFFF6600ICN2|r HUD " .. (ICN2DB.settings.hudLocked and "|cFFFF0000locked|r" or "|cFF00FF00unlocked|r"))
     else
-        print(ICN2:L("SLASH_HELP"))
+        print("|cFFFF6600ICN2|r Commands: |cFFFFFF00/icn2|r [show|eat|drink|rest|reset|starve|dehydrate|exhaust|status|details|hud|lock]")
     end
 end
     

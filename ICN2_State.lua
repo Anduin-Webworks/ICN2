@@ -66,19 +66,13 @@ function ICN2:UpdateState()
 
     local sitFound      = false
     local campfireFound = false
-    local i = 1
-    while true do -- Iterate over buffs until we run out or find both signals. (No need to scan debuffs)
-        local aura = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
-        if not aura then break end
 
-        -- pcall guards against any remaining tainted aura names that slip past the combat check).
+    AuraUtil.ForEachAura("player", "HELPFUL", nil, function(aura)
         local ok, lower = pcall(function()
             return aura.name and string.lower(aura.name) or ""
         end)
-        if not ok then
-            -- Name is tainted (secret string). Skip this aura safely.
-            i = i + 1
-        else
+
+        if ok then
             if not sitFound then
                 for _, p in ipairs(SIT_AURA_PATTERNS) do
                     if lower:find(p, 1, true) then sitFound = true; break end
@@ -89,10 +83,10 @@ function ICN2:UpdateState()
                     if lower:find(p, 1, true) then campfireFound = true; break end
                 end
             end
-            if sitFound and campfireFound then break end
-            i = i + 1
         end
-    end
+
+        if sitFound and campfireFound then return true end  -- early exit
+    end)
 
     s.isSitting    = sitFound
     s.nearCampfire = campfireFound

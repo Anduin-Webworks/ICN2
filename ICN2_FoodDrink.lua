@@ -6,6 +6,10 @@
 
 ICN2 = ICN2 or {}
 
+local L = setmetatable({}, { __index = function(_, k)
+    return ICN2.L and ICN2.L[k] or k
+end })
+
 -- ── Constants ─────────────────────────────────────────────────────────────────
 -- Tier data defines the recovery rates and completion bonuses for each food/drink tier
 -- All values are in FIXED POINTS (not percentages), same for all races
@@ -153,10 +157,15 @@ local function applyBonus(state, need, natural)
 
     ICN2:UpdateHUD()
 
-    local needStr = (need == "hunger") and "|cFF00FF00Hunger|r" or "|cFF4499FFThirst|r"
-    if isFeast then needStr = "|cFF00FF00Hunger|r & |cFF4499FFThirst|r" end
-    print(string.format("|cFFFF6600ICN2|r %s completion bonus! (+%.0f pts — %s tier)",
-        needStr, bonus, state.tier))
+    local needStr
+    if isFeast then
+        needStr = L["FOOD_BONUS_BOTH"]
+    elseif need == "hunger" then
+        needStr = L["FOOD_BONUS_HUNGER"]
+    else
+        needStr = L["FOOD_BONUS_THIRST"]
+    end
+    print(string.format("|cFFFF6600ICN2|r " .. L["FOOD_BONUS_MSG"], needStr, bonus, state.tier))
 end
 
 -- ── Main aura scan ────────────────────────────────────────────────────────────
@@ -199,7 +208,7 @@ function ICN2:OnUnitAura()
             ICN2DB.wellFedEligible      = false
             
             print(string.format(
-                "|cFFFF6600ICN2|r |cFF00FF00Well Fed!|r Hunger decay paused for %d min.",
+                "|cFFFF6600ICN2|r " .. L["WELLFED_MSG"],
                 math.floor(WELLFED_PAUSE_SECS / 60)))
         end
     else

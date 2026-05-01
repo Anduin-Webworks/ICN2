@@ -516,7 +516,10 @@ frame:SetScript("OnEvent", function(self, event, ...)
 
     elseif event == "PLAYER_LOGIN" then
         applyOfflineDecay()
-        C_Timer.After(1, function() refreshArmorCache() end)
+        C_Timer.After(1, function()
+            refreshArmorCache()
+            ICN2:InitAuraCache()  -- seed persistent aura cache; must run after world is ready
+        end)
         ICN2:UpdateHUD()
 
     elseif event == "PLAYER_LOGOUT" then
@@ -534,8 +537,8 @@ frame:SetScript("OnEvent", function(self, event, ...)
         if slot == 5 then refreshArmorCache() end
 
     elseif event == "UNIT_AURA" then
-        local unit = ...
-        if unit == "player" then ICN2:OnUnitAura() end
+        local unit, updateInfo = ...
+        if unit == "player" then ICN2:OnUnitAura(updateInfo) end
 
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         local unit, _, spellID = ...

@@ -67,11 +67,13 @@ function ICN2:UpdateState()
     local sitFound      = false
     local campfireFound = false
 
-    AuraUtil.ForEachAura("player", "HELPFUL", nil, function(aura)
+    -- Read from the shared aura cache maintained by ICN2_FoodDrink.lua.
+    -- No aura scan here — the cache is already current when UpdateState() is called
+    -- because UNIT_AURA patches it before the tick reads it.
+    for _, aura in pairs(ICN2._auraCache or {}) do
         local ok, lower = pcall(function()
             return aura.name and string.lower(aura.name) or ""
         end)
-
         if ok then
             if not sitFound then
                 for _, p in ipairs(SIT_AURA_PATTERNS) do
@@ -84,9 +86,8 @@ function ICN2:UpdateState()
                 end
             end
         end
-
-        if sitFound and campfireFound then return true end  -- early exit
-    end)
+        if sitFound and campfireFound then break end
+    end
 
     s.isSitting    = sitFound
     s.nearCampfire = campfireFound

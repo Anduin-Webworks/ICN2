@@ -1,5 +1,19 @@
 # ICN2 CHANGELOG
 
+## v3.2.0
+
+### Layered context-aware emotes
+
+- Added recovery reactions when a low or critical need returns to a healthy level.
+- Added context reactions for sitting, resting, campfires, housing, and swimming.
+- Added sparse ambient reactions for safe, out-of-combat moments.
+- Added an independent option to disable ambient reactions while retaining need and recovery emotes.
+- Emotes are blocked during combat both when scheduled and immediately before firing.
+
+## v3.1.2
+
+- Fixed a bug causing the decay indicator not to be shown.
+
 ## v3.1.1
 
 - Fixed a `ipairs()` bug caused when entering combat. Again.

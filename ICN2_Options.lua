@@ -297,6 +297,7 @@ function ICN2:BuildOptions()
 
     local emotes = makeCard(panelGeneral, L["OPT_SEC_EMOTES"], -840, 164)
     makeCheckbox(emotes, L["OPT_EMOTES_ENABLED"], 18, -52, function() return ICN2DB.settings.emotesEnabled end, function(v) ICN2DB.settings.emotesEnabled = v end)
+    makeCheckbox(emotes, L["OPT_AMBIENT_EMOTES"], 275, -52, function() return ICN2DB.settings.ambientEmotesEnabled ~= false end, function(v) ICN2DB.settings.ambientEmotesEnabled = v end)
     makeSlider(emotes, L["OPT_EMOTE_CHANCE"], 18, -94, 210, 0, 1, 0.05, function() return ICN2DB.settings.emoteChance end, function(v) ICN2DB.settings.emoteChance = v end, 2)
     makeSlider(emotes, L["OPT_EMOTE_INTERVAL"], 275, -94, 200, 30, 600, 10, function() return ICN2DB.settings.emoteMinInterval end, function(v) ICN2DB.settings.emoteMinInterval = v end, 0)
 

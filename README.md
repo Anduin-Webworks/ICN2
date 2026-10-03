@@ -65,9 +65,15 @@ Available themes include Colorful, Minimalist Vertical, Minimalist Horizontal, S
 
 ## Automatic emotes
 
-ICN2 can perform immersive emotes when a need reaches a low or critical threshold, and after successful recovery actions.
+ICN2 can perform layered, context-aware emotes when a need reaches a low or critical threshold, after successful recovery actions, and when safe world contexts begin.
 
-You can disable automatic emotes or adjust their chance and minimum interval in the General tab. Emotes are suppressed during combat.
+- Need reactions occur when Hunger, Thirst, or Fatigue enters a low or critical tier.
+- Recovery reactions can occur when a need returns to a healthy level.
+- Context reactions can occur when sitting, resting, using a campfire, entering housing, or beginning to swim.
+- Sparse ambient reactions can occur while sitting, resting, or dealing with a low need. They are controlled separately.
+- All emotes are suppressed during combat, including reactions that were delayed before combat began.
+
+You can disable automatic emotes, disable ambient reactions, or adjust the chance and minimum interval in the General tab. The system remains deliberately infrequent to avoid interrupting roleplay or gameplay.
 
 ## Critical warnings and cues
 

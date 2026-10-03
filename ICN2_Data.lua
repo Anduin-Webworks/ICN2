@@ -10,7 +10,7 @@ local L = setmetatable({}, { __index = function(_, k)
 end })
 
 -- Reset savedvariables.decayrates to new 2.0 logic
-local CURRENT_VERSION = 310
+local CURRENT_VERSION = 320
 
 function ICN2:RunMigrations()
     if not ICN2DB.settings then
@@ -56,6 +56,15 @@ function ICN2:RunMigrations()
     if not ICN2DB.version or ICN2DB.version < 310 then
         ICN2DB.version = CURRENT_VERSION
         print("|cFFFF6600ICN2|r: Critical warnings added in v3.1.0.")
+    end
+
+    if ICN2DB.settings.ambientEmotesEnabled == nil then
+        ICN2DB.settings.ambientEmotesEnabled = true
+    end
+
+    if not ICN2DB.version or ICN2DB.version < 320 then
+        ICN2DB.version = CURRENT_VERSION
+        print("|cFFFF6600ICN2|r: Context-aware emotes added in v3.2.0.")
     end
 end
 
@@ -108,6 +117,7 @@ ICN2.DEFAULTS = {
 
         -- Emotes
         emotesEnabled    = true,
+        ambientEmotesEnabled = true,
         emoteChance      = 0.3,  -- probability per threshold crossing (0-1)
         emoteMinInterval = 120,  -- minimum seconds between emotes
 
@@ -280,6 +290,25 @@ ICN2.EMOTES = {
         hunger  = { "/burp", "/flex" },
         thirst  = { "/burp" },
         fatigue = { "/flex", "/smile" },
+    },
+    recovered = {
+        hunger  = { "/sigh", "/smile" },
+        thirst  = { "/sigh", "/smile" },
+        fatigue = { "/sigh", "/relax" },
+    },
+    context = {
+        sitting  = { "/relax", "/sigh", "/stretch" },
+        resting  = { "/relax", "/smile", "/sigh" },
+        campfire = { "/relax", "/smile" },
+        housing  = { "/relax", "/smile" },
+        swimming = { "/gasp", "/cough", "/sigh" },
+    },
+    ambient = {
+        sitting  = { "/relax", "/sigh", "/stretch" },
+        resting  = { "/relax", "/smile", "/sigh" },
+        hungry   = { "/sniff", "/lick", "/sigh" },
+        thirsty  = { "/cough", "/sigh" },
+        tired    = { "/yawn", "/stretch", "/sigh" },
     },
 }
 

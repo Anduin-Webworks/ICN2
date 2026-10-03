@@ -471,6 +471,7 @@ end
     ICN2:UpdateHUD()
     ICN2:UpdateAlerts()
     ICN2:CheckEmotes(oldH, oldT, oldF)
+    ICN2:CheckContextEmotes()
 end
 
 -- Manual recovery by a fixed amount, same for all races.

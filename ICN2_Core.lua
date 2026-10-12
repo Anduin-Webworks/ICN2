@@ -47,6 +47,7 @@ ICN2._wellFedPauseExpiry    = 0                                         -- times
 ICN2._fatigueRecoveryTier   = "none"                                    -- "fast", "slow", or "none" based on current conditions (for PrintDetails)
 ICN2._fatigueRecoverySrc    = ""                                        -- human-readable description of the source of fatigue recovery (e.g. "resting near campfire") for display in PrintDetails
 ICN2._crossNeedActive       = {}                                        -- list of active cross-need modifiers for display in PrintDetails (e.g. "hunger → fatigue coupling")
+ICN2._manualRecovery        = nil                                       -- one timed manual recovery plan, applied evenly across its duration
 
 -- ══ SECTION 1 — Initialization helpers ════════════════════════════════════════
 local function deepCopy(orig) -- utility function to deep copy a table, used for copying default settings into the saved variable without reference issues
@@ -104,6 +105,9 @@ local function initDB() -- initializes the saved variable database, applying def
         if ICN2DB.settings[k] == nil then
             ICN2DB.settings[k] = (type(v) == "table") and deepCopy(v) or v
         end
+    end
+    if ICN2DB.settings.alertSound == "subtle" then
+        ICN2DB.settings.alertSound = "whistle"
     end
     local dcb = ICN2.DEFAULTS.settings.customDecayBias
     if not ICN2DB.settings.customDecayBias then
@@ -188,8 +192,17 @@ local function refreshArmorCache() -- checks the player's equipped chest armor a
         armorFatigueCache = ICN2.ARMOR_FATIGUE.CLOTH
         return
     end
----@diagnostic disable-next-line: deprecated
-    local _, _, _, _, _, _, subType = GetItemInfo(itemLink)
+    -- Retail moved item queries into C_Item.  The legacy global can be nil on
+    -- newer PTR builds, so prefer the namespace and retain the old fallback
+    -- for older clients.
+    local getItemInfo = C_Item and C_Item.GetItemInfo
+    if type(getItemInfo) ~= "function" then getItemInfo = GetItemInfo end
+    if type(getItemInfo) ~= "function" then
+        if not armorFatigueCache then armorFatigueCache = ICN2.ARMOR_FATIGUE.CLOTH end
+        return
+    end
+
+    local _, _, _, _, _, _, subType = getItemInfo(itemLink)
     if not subType then
         if not armorFatigueCache then armorFatigueCache = ICN2.ARMOR_FATIGUE.CLOTH end
         return
@@ -348,7 +361,11 @@ end
 local FOOD_TRICKLE = { simple = 30.0, complex = 40.0, feast = 60.0 }
 
 function ICN2:_ApplyFoodDrinkRecovery(rates)
-    if ICN2:IsEating() then
+    -- FoodDrink is an optional integration.  Keep the rate engine alive if a
+    -- PTR build prevents that module from exposing one of its query methods.
+    local isEating = type(ICN2.IsEating) == "function" and ICN2:IsEating()
+    local isDrinking = type(ICN2.IsDrinking) == "function" and ICN2:IsDrinking()
+    if isEating then
         local duration = ICN2:GetFoodDuration() or 30
         local tier     = ICN2:GetFoodTier()
         local trickle  = FOOD_TRICKLE[tier] or FOOD_TRICKLE.simple
@@ -358,7 +375,7 @@ function ICN2:_ApplyFoodDrinkRecovery(rates)
             rates.thirst = rates.thirst + perSec
         end
     end
-    if ICN2:IsDrinking() then
+    if isDrinking then
         local duration = ICN2:GetDrinkDuration() or 30
         local tier     = ICN2:GetDrinkTier()
         local trickle  = FOOD_TRICKLE[tier] or FOOD_TRICKLE.simple
@@ -380,7 +397,8 @@ function ICN2:_ApplyFatigueRecovery(rates)
         return
     end
 
-    local isEatDrink = ICN2:IsEating() or ICN2:IsDrinking()
+    local isEatDrink = (type(ICN2.IsEating) == "function" and ICN2:IsEating())
+        or (type(ICN2.IsDrinking) == "function" and ICN2:IsDrinking())
     local src        = {}
     local gain       = 0
     local tier       = "none"
@@ -442,6 +460,7 @@ local function clamp(v, maxV)
     if v > maxV then return maxV end
     return v
 end
+local applyTimedManualRecovery
 
 local function tick() -- the main function that applies the current rates to the needs each tick; it gets the current rates, applies them to the needs, clamps the results, updates the HUD, and checks for any emotes that need to be triggered.
 
@@ -465,6 +484,7 @@ end
     ICN2DB.hunger  = clamp(ICN2DB.hunger  + hungerDelta,  ICN2:GetMaxValue("hunger"))
     ICN2DB.thirst  = clamp(ICN2DB.thirst  + thirstDelta,  ICN2:GetMaxValue("thirst"))
     ICN2DB.fatigue = clamp(ICN2DB.fatigue + fatigueDelta, ICN2:GetMaxValue("fatigue"))
+    applyTimedManualRecovery(GetTime())
 
     ICN2._lastRates = rates
 
@@ -497,6 +517,81 @@ function ICN2:Rest(amount)
     self:UpdateHUD()
     self:UpdateAlerts()
     self:TriggerEmote("satisfied", "fatigue")
+end
+
+-- Start one timed manual recovery plan. Amount is interpreted as points or as
+-- a percentage of each selected need's maximum, then delivered evenly over
+-- duration seconds. A new plan replaces any plan already in progress.
+function ICN2:StartManualRecovery(needs, amount, isPercent, duration)
+    local validNeeds = {}
+    for _, need in ipairs({ "hunger", "thirst", "fatigue" }) do
+        if needs and needs[need] then validNeeds[need] = true end
+    end
+    amount = tonumber(amount)
+    duration = tonumber(duration)
+    if not next(validNeeds) or not amount or amount <= 0 or not duration or duration <= 0 then
+        return false
+    end
+
+    local amounts = {}
+    for need in pairs(validNeeds) do
+        local maxValue = self:GetMaxValue(need)
+        amounts[need] = isPercent and (maxValue * amount / 100) or amount
+    end
+    local now = GetTime()
+    self._manualRecovery = {
+        amounts = amounts,
+        duration = duration,
+        startedAt = now,
+        appliedUntil = now,
+    }
+    return true
+end
+
+function ICN2:RestoreNeeds(needs, amount, isPercent)
+    amount = tonumber(amount)
+    if not amount or amount <= 0 then return false end
+    local restored = {}
+    for _, need in ipairs({ "hunger", "thirst", "fatigue" }) do
+        if needs and needs[need] then
+            local maxValue = self:GetMaxValue(need)
+            local points = isPercent and (maxValue * amount / 100) or amount
+            ICN2DB[need] = clamp(ICN2DB[need] + points, maxValue)
+            restored[#restored + 1] = need
+        end
+    end
+    if #restored == 0 then return false end
+    self:UpdateHUD()
+    self:UpdateAlerts()
+    for _, need in ipairs(restored) do self:TriggerEmote("satisfied", need) end
+    return true
+end
+
+function ICN2:CancelManualRecovery(need)
+    if need and self._manualRecovery then
+        self._manualRecovery.amounts[need] = nil
+        if not next(self._manualRecovery.amounts) then self._manualRecovery = nil end
+    else
+        self._manualRecovery = nil
+    end
+end
+
+applyTimedManualRecovery = function(now)
+    local plan = ICN2._manualRecovery
+    if not plan then return end
+    local elapsedUntil = math.min(now, plan.startedAt + plan.duration)
+    local span = math.max(0, elapsedUntil - plan.appliedUntil)
+    if span > 0 then
+        for need, totalAmount in pairs(plan.amounts) do
+            local increment = totalAmount * span / plan.duration
+            local maxValue = ICN2:GetMaxValue(need)
+            ICN2DB[need] = clamp(ICN2DB[need] + increment, maxValue)
+        end
+        plan.appliedUntil = elapsedUntil
+    end
+    if now >= plan.startedAt + plan.duration then
+        ICN2._manualRecovery = nil
+    end
 end
 
 -- ══ SECTION 6 — Events ═════════════════════════════════════════════════════════
@@ -615,7 +710,9 @@ frame:SetScript("OnUpdate", function(self, dt)
     if elapsed >= tickInterval then
         elapsed = 0
         ICN2:UpdateState()
-        ICN2:FoodDrinkTick()
+        if type(ICN2.FoodDrinkTick) == "function" then
+            ICN2:FoodDrinkTick()
+        end
         ICN2:RestStanceTick()
         ICN2:SpellRecoveryTick()
         tick()
@@ -823,44 +920,140 @@ end
 
 -- ══ SECTION 9 — Slash commands ═════════════════════════════════════════════════
 SLASH_ICN21 = "/icn2"
-SlashCmdList["ICN2"] = function(msg) -- handles slash commands for showing the options panel, manually eating/drinking/resting, resetting needs, etc, called when the user types /icn2 followed by a command
-    msg = msg:lower():trim()
-    if msg == "show" or msg == "" then
+local function printCommandHelp()
+    print("|cFFFF6600ICN2|r " .. L["MSG_COMMANDS"])
+end
+
+local function parseNeedList(value)
+    local selected = {}
+    if value == "all" then
+        return { hunger = true, thirst = true, fatigue = true }
+    end
+    for item in value:gmatch("[^+,]+") do
+        item = item:trim()
+        if item ~= "hunger" and item ~= "thirst" and item ~= "fatigue" then return nil end
+        selected[item] = true
+    end
+    return next(selected) and selected or nil
+end
+
+local function parseCommandAmount(value)
+    local isPercent = value:sub(-1) == "%"
+    if isPercent then value = value:sub(1, -2) end
+    local amount = tonumber(value)
+    if not amount or amount <= 0 or (isPercent and amount > 100) then return nil end
+    return amount, isPercent
+end
+
+local function parseCommandDuration(value)
+    local number, unit = value:match("^(%d+%.?%d*)([ms])$")
+    number = tonumber(number)
+    if not number or number <= 0 then return nil end
+    local seconds = unit == "m" and number * 60 or number
+    if seconds > 3600 then return nil end
+    return seconds
+end
+
+local function setHUDEnabled(enabled)
+    ICN2DB.settings.hudEnabled = enabled
+    ICN2:UpdateHUD()
+    print("|cFFFF6600ICN2|r " .. (enabled and L["MSG_HUD_ENABLED"] or L["MSG_HUD_DISABLED"]))
+end
+
+local function setHUDLocked(locked)
+    ICN2DB.settings.hudLocked = locked
+    ICN2:LockHUD(locked)
+    print("|cFFFF6600ICN2|r " .. (locked and L["MSG_HUD_LOCKED"] or L["MSG_HUD_UNLOCKED"]))
+end
+
+SlashCmdList["ICN2"] = function(msg)
+    msg = (msg or ""):lower():trim()
+    local args = {}
+    for token in msg:gmatch("%S+") do args[#args + 1] = token end
+    local command = args[1] or ""
+
+    if command == "" or command == "show" or command == "options" then
         ICN2:ToggleOptions()
-    elseif msg == "eat" then
+    elseif command == "help" then
+        printCommandHelp()
+    elseif command == "eat" then
         ICN2:Eat(50); print("|cFFFF6600ICN2|r " .. L["MSG_EAT"])
-    elseif msg == "drink" then
+    elseif command == "drink" then
         ICN2:Drink(50); print("|cFFFF6600ICN2|r " .. L["MSG_DRINK"])
-    elseif msg == "rest" then
+    elseif command == "rest" then
         ICN2:Rest(40); print("|cFFFF6600ICN2|r " .. L["MSG_REST"])
-    elseif msg == "reset" then
+    elseif command == "reset" then
+        ICN2:CancelManualRecovery()
         ICN2DB.hunger  = ICN2:GetMaxValue("hunger")
         ICN2DB.thirst  = ICN2:GetMaxValue("thirst")
         ICN2DB.fatigue = ICN2:GetMaxValue("fatigue")
         ICN2:UpdateHUD(); ICN2:UpdateAlerts(); print("|cFFFF6600ICN2|r " .. L["MSG_RESET"])
-    elseif msg == "starve" then
+    elseif command == "starve" then
+        ICN2:CancelManualRecovery("hunger")
         ICN2DB.hunger = 0; ICN2:UpdateHUD(); ICN2:UpdateAlerts()
         print(string.format("|cFFFF6600ICN2|r " .. L["MSG_SET_ZERO"], "|cFF00FF00" .. L["HUNGER"] .. "|r"))
-    elseif msg == "dehydrate" then
+    elseif command == "dehydrate" then
+        ICN2:CancelManualRecovery("thirst")
         ICN2DB.thirst = 0; ICN2:UpdateHUD(); ICN2:UpdateAlerts()
         print(string.format("|cFFFF6600ICN2|r " .. L["MSG_SET_ZERO"], "|cFF4499FF" .. L["THIRST"] .. "|r"))
-    elseif msg == "exhaust" then
+    elseif command == "exhaust" then
+        ICN2:CancelManualRecovery("fatigue")
         ICN2DB.fatigue = 0; ICN2:UpdateHUD(); ICN2:UpdateAlerts()
         print(string.format("|cFFFF6600ICN2|r " .. L["MSG_SET_ZERO"], "|cFFFFDD00" .. L["FATIGUE"] .. "|r"))
-    elseif msg == "status" then
+    elseif command == "status" then
         print(string.format("|cFFFF6600ICN2|r " .. L["STATUS_LINE"],
             ICN2:GetNeedPercent("hunger"), ICN2:GetNeedPercent("thirst"), ICN2:GetNeedPercent("fatigue")))
-    elseif msg == "details" then
+    elseif command == "details" then
         ICN2:PrintDetails()
-    elseif msg == "hud" then
-        ICN2DB.settings.hudEnabled = not ICN2DB.settings.hudEnabled
-        ICN2:UpdateHUD()
-        print("|cFFFF6600ICN2|r " .. (ICN2DB.settings.hudEnabled and L["MSG_HUD_ENABLED"] or L["MSG_HUD_DISABLED"]))
-    elseif msg == "lock" then
-        ICN2DB.settings.hudLocked = not ICN2DB.settings.hudLocked
-        ICN2:LockHUD(ICN2DB.settings.hudLocked)
-        print("|cFFFF6600ICN2|r " .. (ICN2DB.settings.hudLocked and L["MSG_HUD_LOCKED"] or L["MSG_HUD_UNLOCKED"]))
+    elseif command == "hud" then
+        local action = args[2] or "toggle"
+        if action == "on" or action == "show" then setHUDEnabled(true)
+        elseif action == "off" or action == "hide" then setHUDEnabled(false)
+        elseif action == "toggle" then setHUDEnabled(not ICN2DB.settings.hudEnabled)
+        elseif action == "lock" then setHUDLocked(true)
+        elseif action == "unlock" then setHUDLocked(false)
+        else printCommandHelp() end
+    elseif command == "lock" then
+        setHUDLocked(not ICN2DB.settings.hudLocked)
+    elseif command == "restore" then
+        if args[2] == "cancel" then
+            ICN2:CancelManualRecovery()
+            print("|cFFFF6600ICN2|r " .. L["MSG_RESTORE_CANCELLED"])
+        else
+            local needs = args[2] and parseNeedList(args[2])
+            local amount, isPercent
+            if args[3] then amount, isPercent = parseCommandAmount(args[3]) end
+            local duration
+            if args[4] or args[5] then
+                if args[4] ~= "over" or not args[5] or args[6] then
+                    printCommandHelp(); return
+                end
+                duration = parseCommandDuration(args[5])
+            end
+            if not needs or not amount or (args[4] and not duration) then
+                printCommandHelp()
+            elseif duration then
+                if ICN2:StartManualRecovery(needs, amount, isPercent, duration) then
+                    print("|cFFFF6600ICN2|r " .. L["MSG_RESTORE_COMMAND_STARTED"])
+                end
+            elseif ICN2:RestoreNeeds(needs, amount, isPercent) then
+                print("|cFFFF6600ICN2|r " .. L["MSG_RESTORE_COMMAND_NOW"])
+            end
+        end
+    elseif command == "set" then
+        local need = args[2]
+        local amountText = args[3]
+        local amountTextValue = amountText and amountText:match("^(%d+%.?%d*)%%$")
+        local amount = tonumber(amountTextValue)
+        if not need or (need ~= "hunger" and need ~= "thirst" and need ~= "fatigue") or not amount or amount < 0 or amount > 100 or args[4] then
+            printCommandHelp()
+        else
+            ICN2:CancelManualRecovery(need)
+            ICN2DB[need] = ICN2:GetMaxValue(need) * amount / 100
+            ICN2:UpdateHUD(); ICN2:UpdateAlerts()
+            print(string.format("|cFFFF6600ICN2|r " .. L["MSG_SET_PERCENT"], L[need:upper()], amount))
+        end
     else
-        print("|cFFFF6600ICN2|r " .. L["MSG_COMMANDS"])
+        printCommandHelp()
     end
 end

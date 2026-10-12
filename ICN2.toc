@@ -1,8 +1,8 @@
-## Interface: 120007, 120100
+## Interface: 120105, 120100
 ## Title: |cFFFF6600ICN2|r - Immersive Character Needs 2
-## Notes: Survival-style hunger, thirst and fatigue tracking for immersive roleplay.
+## Notes: Immersive needs tracking with manual and timed recovery controls.
 ## Author: Oswaldovzki
-## Version: 3.2.0
+## Version: 3.2.3
 ## SavedVariablesPerCharacter: ICN2DB
 ## IconTexture: Interface\AddOns\ICN2\assets\ICN2_LOGO.png
 ## X-Curse-Project-ID: 1477539

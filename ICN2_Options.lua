@@ -13,8 +13,10 @@ end })
 local optFrame
 local panelGeneral
 local panelDecay
+local panelRestore
 local tabBtnGeneral
 local tabBtnDecay
+local tabBtnRestore
 local presetBtns = {}
 local decaySliders = {}
 local labelDropdown
@@ -175,11 +177,14 @@ end
 
 local function selectOptionsTab(which)
     local general = which == 1
+    local decay = which == 2
     panelGeneral:SetShown(general)
-    panelDecay:SetShown(not general)
+    panelDecay:SetShown(decay)
+    panelRestore:SetShown(which == 3)
     tabBtnGeneral:SetSelected(general)
-    tabBtnDecay:SetSelected(not general)
-    if not general then refreshDecaySliders() end
+    tabBtnDecay:SetSelected(decay)
+    tabBtnRestore:SetSelected(which == 3)
+    if decay then refreshDecaySliders() end
 end
 
 local function makeTabButton(parent, text, y, onClick)
@@ -243,8 +248,9 @@ function ICN2:BuildOptions()
     makeLabel(sidebar, "Character needs", 18, -47, "GameFontHighlightSmall", COLORS.muted)
     tabBtnGeneral = makeTabButton(sidebar, L["TAB_GENERAL"], -78, function() selectOptionsTab(1) end)
     tabBtnDecay = makeTabButton(sidebar, L["TAB_DECAY"], -124, function() selectOptionsTab(2) end)
-    makeLabel(sidebar, "3.1.0", 18, -184, "GameFontDisableSmall", COLORS.muted)
-    makeLabel(sidebar, "Changes apply instantly", 18, -207, "GameFontDisableSmall", COLORS.muted, 130)
+    tabBtnRestore = makeTabButton(sidebar, L["TAB_RESTORE"], -170, function() selectOptionsTab(3) end)
+    makeLabel(sidebar, "3.2.0", 18, -230, "GameFontDisableSmall", COLORS.muted)
+    makeLabel(sidebar, "Changes apply instantly", 18, -253, "GameFontDisableSmall", COLORS.muted, 130)
 
     local content = CreateFrame("Frame", nil, optFrame)
     content:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 12, 0); content:SetPoint("BOTTOMRIGHT", optFrame, "BOTTOMRIGHT", -14, 8)
@@ -257,6 +263,7 @@ function ICN2:BuildOptions()
     scrollChild:SetWidth(540); scrollChild:SetHeight(1400); scroll:SetScrollChild(scrollChild)
     panelGeneral = CreateFrame("Frame", nil, scrollChild); panelGeneral:SetAllPoints(scrollChild)
     panelDecay = CreateFrame("Frame", nil, scrollChild); panelDecay:SetAllPoints(scrollChild); panelDecay:Hide()
+    panelRestore = CreateFrame("Frame", nil, scrollChild); panelRestore:SetAllPoints(scrollChild); panelRestore:Hide()
 
     local hud = makeCard(panelGeneral, L["OPT_SEC_HUD"], -4, 330)
     makeCheckbox(hud, L["OPT_HUD_ENABLED"], 18, -52, function() return ICN2DB.settings.hudEnabled end, function(v) ICN2DB.settings.hudEnabled = v; ICN2:UpdateHUD() end, 235)
@@ -288,8 +295,8 @@ function ICN2:BuildOptions()
     makeCheckbox(alerts, L["OPT_ALERT_FATIGUE"], 275, -126, function() return ICN2DB.settings.alertFatigue end, function(v) ICN2DB.settings.alertFatigue = v; ICN2:UpdateAlerts() end, 220)
     makeSlider(alerts, L["OPT_ALERT_OPACITY"], 18, -176, 210, 0.03, 1.00, 0.01, function() return ICN2DB.settings.alertVisualOpacity end, function(v) ICN2DB.settings.alertVisualOpacity = v; ICN2:UpdateAlerts() end, 2)
     makeSlider(alerts, L["OPT_ALERT_INTERVAL"], 275, -176, 200, 60, 1800, 30, function() return ICN2DB.settings.alertReminderInterval end, function(v) ICN2DB.settings.alertReminderInterval = v end, 0)
-    local soundValues = function() return { { id = "subtle", label = "Subtle" } } end
-    local soundText = function(raw) return raw and (ICN2DB.settings.alertSound or "subtle") or "Subtle" end
+    local soundValues = function() return { { id = "whistle", label = "Whistle" } } end
+    local soundText = function(raw) return raw and (ICN2DB.settings.alertSound or "whistle") or "Whistle" end
     makeDropdown(alerts, "ICN2AlertSoundDropdown", L["OPT_ALERT_SOUND"], 18, -232, 125, soundText, soundValues, function(item) ICN2DB.settings.alertSound = item.id end)
     makeActionButton(alerts, L["BTN_PREVIEW_ALERT"], 139, -270, 128, function() ICN2:PreviewAlert() end)
     makeActionButton(alerts, L["BTN_TEST_SOUND"], 277, -270, 108, function() ICN2:TestAlertSound() end)
@@ -301,10 +308,67 @@ function ICN2:BuildOptions()
     makeSlider(emotes, L["OPT_EMOTE_CHANCE"], 18, -94, 210, 0, 1, 0.05, function() return ICN2DB.settings.emoteChance end, function(v) ICN2DB.settings.emoteChance = v end, 2)
     makeSlider(emotes, L["OPT_EMOTE_INTERVAL"], 275, -94, 200, 30, 600, 10, function() return ICN2DB.settings.emoteMinInterval end, function(v) ICN2DB.settings.emoteMinInterval = v end, 0)
 
-    local manual = makeCard(panelGeneral, L["OPT_SEC_MANUAL_RESTORE"], -1016, 202)
-    makeActionButton(manual, L["BTN_EAT"], 18, -52, 108, function() ICN2:Eat(50) end); makeActionButton(manual, L["BTN_DRINK"], 136, -52, 108, function() ICN2:Drink(50) end); makeActionButton(manual, L["BTN_REST"], 254, -52, 108, function() ICN2:Rest(40) end); makeActionButton(manual, L["BTN_RESET"], 372, -52, 108, function() ICN2DB.hunger=ICN2:GetMaxValue("hunger"); ICN2DB.thirst=ICN2:GetMaxValue("thirst"); ICN2DB.fatigue=ICN2:GetMaxValue("fatigue"); ICN2:UpdateHUD() end)
+    local manual = makeCard(panelRestore, L["OPT_SEC_MANUAL_RESTORE"], -4, 202)
+    makeActionButton(manual, L["BTN_EAT"], 18, -52, 108, function() ICN2:Eat(50) end); makeActionButton(manual, L["BTN_DRINK"], 136, -52, 108, function() ICN2:Drink(50) end); makeActionButton(manual, L["BTN_REST"], 254, -52, 108, function() ICN2:Rest(40) end); makeActionButton(manual, L["BTN_RESET"], 372, -52, 108, function() ICN2DB.hunger=ICN2:GetMaxValue("hunger"); ICN2DB.thirst=ICN2:GetMaxValue("thirst"); ICN2DB.fatigue=ICN2:GetMaxValue("fatigue"); ICN2:UpdateHUD(); ICN2:UpdateAlerts() end)
     makeLabel(manual, L["OPT_SEC_MANUAL_DEPLETE"], 18, -102, "GameFontNormal", COLORS.gold)
-    makeActionButton(manual, L["BTN_STARVE"], 18, -126, 108, function() ICN2DB.hunger=0; ICN2:UpdateHUD() end); makeActionButton(manual, L["BTN_DEHYDRATE"], 136, -126, 108, function() ICN2DB.thirst=0; ICN2:UpdateHUD() end); makeActionButton(manual, L["BTN_EXHAUST"], 254, -126, 108, function() ICN2DB.fatigue=0; ICN2:UpdateHUD() end)
+    makeActionButton(manual, L["BTN_STARVE"], 18, -126, 108, function() ICN2DB.hunger=0; ICN2:UpdateHUD(); ICN2:UpdateAlerts() end); makeActionButton(manual, L["BTN_DEHYDRATE"], 136, -126, 108, function() ICN2DB.thirst=0; ICN2:UpdateHUD(); ICN2:UpdateAlerts() end); makeActionButton(manual, L["BTN_EXHAUST"], 254, -126, 108, function() ICN2DB.fatigue=0; ICN2:UpdateHUD(); ICN2:UpdateAlerts() end)
+
+    local timed = makeCard(panelRestore, L["OPT_SEC_TIMED_RESTORE"], -222, 390)
+    makeLabel(timed, L["DESC_TIMED_RESTORE"], 18, -48, "GameFontHighlightSmall", COLORS.muted, 475)
+    makeLabel(timed, L["OPT_RESTORE_NEEDS"], 18, -92, "GameFontNormal", COLORS.gold)
+    local selectedNeeds = { hunger = true, thirst = false, fatigue = false }
+    makeCheckbox(timed, L["HUNGER"], 18, -104, function() return selectedNeeds.hunger end, function(v) selectedNeeds.hunger = v end, 110)
+    makeCheckbox(timed, L["THIRST"], 160, -104, function() return selectedNeeds.thirst end, function(v) selectedNeeds.thirst = v end, 110)
+    makeCheckbox(timed, L["FATIGUE"], 302, -104, function() return selectedNeeds.fatigue end, function(v) selectedNeeds.fatigue = v end, 110)
+    makeLabel(timed, L["OPT_RESTORE_AMOUNT"], 18, -144, "GameFontNormal", COLORS.gold)
+    local amountMode = "percent"
+    local amountSlider
+    local pointsButton = makeActionButton(timed, L["OPT_RESTORE_POINTS"], 18, -165, 112, function() end)
+    local percentButton = makeActionButton(timed, L["OPT_RESTORE_PERCENT"], 140, -165, 112, function() end)
+    amountSlider = CreateFrame("Slider", nil, timed, "OptionsSliderTemplate")
+    amountSlider:SetPoint("TOPLEFT", timed, "TOPLEFT", 275, -169); amountSlider:SetWidth(205)
+    amountSlider:SetMinMaxValues(1, 100); amountSlider:SetValueStep(1); amountSlider:SetObeyStepOnDrag(true); amountSlider:SetValue(25)
+    amountSlider.Low:SetText("1%"); amountSlider.High:SetText("100%")
+    local function updateAmountLabel(value)
+        amountSlider.Text:SetText(L["OPT_RESTORE_AMOUNT_VALUE"]:format(math.floor(value + 0.5), amountMode == "percent" and "%" or ""))
+        amountSlider.Text:SetTextColor(unpack(COLORS.text))
+    end
+    updateAmountLabel(amountSlider:GetValue())
+    amountSlider:SetScript("OnValueChanged", function(self, value)
+        updateAmountLabel(value)
+    end)
+    local function updateModeButtons()
+        pointsButton:SetAlpha(amountMode == "points" and 1 or 0.58)
+        percentButton:SetAlpha(amountMode == "percent" and 1 or 0.58)
+    end
+    pointsButton:SetScript("OnClick", function()
+        amountMode = "points"; amountSlider:SetMinMaxValues(1, 300); amountSlider:SetValueStep(1); amountSlider:SetValue(math.min(300, amountSlider:GetValue())); amountSlider.Low:SetText("1"); amountSlider.High:SetText("300"); updateAmountLabel(amountSlider:GetValue()); updateModeButtons()
+    end)
+    percentButton:SetScript("OnClick", function()
+        amountMode = "percent"; amountSlider:SetMinMaxValues(1, 100); amountSlider:SetValueStep(1); amountSlider:SetValue(math.min(100, amountSlider:GetValue())); amountSlider.Low:SetText("1%"); amountSlider.High:SetText("100%"); updateAmountLabel(amountSlider:GetValue()); updateModeButtons()
+    end)
+    updateModeButtons()
+    local durationSlider = CreateFrame("Slider", nil, timed, "OptionsSliderTemplate")
+    durationSlider:SetPoint("TOPLEFT", timed, "TOPLEFT", 18, -244); durationSlider:SetWidth(300)
+    durationSlider:SetMinMaxValues(1, 60); durationSlider:SetValueStep(1); durationSlider:SetObeyStepOnDrag(true); durationSlider:SetValue(5)
+    durationSlider.Low:SetText("1"); durationSlider.High:SetText("60")
+    durationSlider.Text:SetText(L["OPT_RESTORE_DURATION_VALUE"]:format(5)); durationSlider.Text:SetTextColor(unpack(COLORS.text))
+    durationSlider:SetScript("OnValueChanged", function(self, value)
+        value = math.floor(value + 0.5)
+        self.Text:SetText(L["OPT_RESTORE_DURATION_VALUE"]:format(value))
+    end)
+    local statusText
+    makeActionButton(timed, L["BTN_START_RESTORE"], 18, -318, 150, function()
+        if ICN2:StartManualRecovery(selectedNeeds, amountSlider:GetValue(), amountMode == "percent", durationSlider:GetValue() * 60) then
+            statusText:SetText(L["MSG_RESTORE_STARTED"])
+        else
+            statusText:SetText(L["MSG_RESTORE_SELECT_NEED"])
+        end
+    end)
+    statusText = makeLabel(timed, ICN2._manualRecovery and L["MSG_RESTORE_RUNNING"] or "", 184, -326, "GameFontHighlightSmall", COLORS.muted, 290)
+    makeActionButton(timed, L["BTN_CANCEL_RESTORE"], 18, -352, 150, function()
+        ICN2:CancelManualRecovery(); statusText:SetText(L["MSG_RESTORE_CANCELLED"])
+    end)
 
     local decay = makeCard(panelDecay, L["OPT_SEC_DECAY_PRESET"], -4, 500)
     local presets = { "fast", "medium", "slow", "realistic", "custom" }

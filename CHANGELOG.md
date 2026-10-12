@@ -1,6 +1,30 @@
 # ICN2 CHANGELOG
 
+## v3.2.3
+
+### PTR compatibility and alert fixes
+
+- Updated item and armor lookups for the namespaced Retail/PTR `C_Item` APIs.
+- Made optional item-use hooks resilient to missing or changed Blizzard APIs so FoodDrink initialization cannot disable the HUD.
+- Added defensive handling for unavailable FoodDrink methods during rate updates.
+- Fixed critical sound cues replaying continuously when `PlaySound()` does not return a reliable success value.
+- Renamed the alert sound option to **Whistle** and migrated existing `subtle` settings.
+
 ## v3.2.0
+
+### Restore controls
+
+- Moved manual restore and deplete controls to a dedicated Restore tab.
+- Added timed manual recovery for any combination of Hunger, Thirst, and Fatigue.
+- Timed recovery accepts points or a percentage of each need's maximum and applies the selected amount evenly over 1–60 minutes.
+- Normal need changes continue during timed recovery; starting a new plan replaces the active plan, and recovery can be cancelled.
+
+### Slash command refresh
+
+- Added `/icn2 help` with grouped commands and examples, plus `/icn2 options` as a clearer options-menu command.
+- Added `/icn2 restore` for instant or timed recovery of one or more needs, including `all` and recovery cancellation.
+- Added `/icn2 set <need> <percent>%` and explicit HUD visibility and locking commands.
+- Kept existing command shortcuts working for compatibility.
 
 ### Layered context-aware emotes
 

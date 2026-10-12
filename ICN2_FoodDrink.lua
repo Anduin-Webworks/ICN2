@@ -8,6 +8,11 @@
 
 ICN2 = ICN2 or {}
 
+-- Item APIs are namespaced on newer Retail/PTR builds.  Keep one compatibility
+-- alias so item hints remain optional and never prevent this module from loading.
+local getItemInfo = C_Item and C_Item.GetItemInfo or GetItemInfo
+local getItemInfoInstant = C_Item and C_Item.GetItemInfoInstant or GetItemInfoInstant
+
 local L = setmetatable({}, { __index = function(_, k)
     return ICN2.L and ICN2.L[k] or k
 end })
@@ -86,15 +91,18 @@ local function isFoodDrinkItem(itemRef)
 
     local itemID = tonumber(itemRef)
     if not itemID and type(itemRef) == "string" then
-        itemID = GetItemInfoInstant(itemRef)
+        if type(getItemInfoInstant) == "function" then
+            itemID = getItemInfoInstant(itemRef)
+        end
     end
-    if not itemID and type(itemRef) == "string" then
-        local _, _, _, _, _, _, _, classID, subClassID = GetItemInfo(itemRef)
+    if not itemID and type(itemRef) == "string" and type(getItemInfo) == "function" then
+        local _, _, _, _, _, _, _, classID, subClassID = getItemInfo(itemRef)
         return classID == 0 and subClassID == 5
     end
     if not itemID then return false end
 
-    local _, _, _, _, _, classID, subClassID = GetItemInfoInstant(itemID)
+    if type(getItemInfoInstant) ~= "function" then return false end
+    local _, _, _, _, _, classID, subClassID = getItemInfoInstant(itemID)
     return classID == 0 and subClassID == 5
 end
 
@@ -104,7 +112,9 @@ local function cacheRecentConsumableUse(itemRef, itemQuality)
 
     local quality = itemQuality
     if quality == nil then
-        quality = select(3, GetItemInfo(itemRef))
+        if type(getItemInfo) == "function" then
+            quality = select(3, getItemInfo(itemRef))
+        end
     end
     local tier = qualityToTierHint(quality)
     if not tier then return end
@@ -460,26 +470,47 @@ end
 
 local function installConsumableHooks()
     if ICN2._consumableHooksInstalled then return end
-    ICN2._consumableHooksInstalled = true
 
-    if hooksecurefunc then
-        if C_Container and C_Container.UseContainerItem then
-            hooksecurefunc(C_Container, "UseContainerItem", function(bag, slot)
-                cacheRecentConsumableUseFromBag(bag, slot)
-            end)
+    -- Blizzard has moved/removed several item-use entry points between PTR
+    -- builds.  hooksecurefunc() raises when its target does not exist; because
+    -- this file is loaded before Core, one failed hook used to abort the whole
+    -- module and leave IsEating/FoodDrinkTick undefined.  Treat these hooks as
+    -- optional integrations so the aura path remains available.
+    local function tryHook(target, method, callback)
+        if type(hooksecurefunc) ~= "function" then return false end
+        if method then
+            if not target or type(target[method]) ~= "function" then return false end
+        elseif type(_G[target]) ~= "function" then
+            return false
         end
 
-        hooksecurefunc("UseAction", function(slot)
-            local actionType, id = GetActionInfo(slot)
-            if actionType == "item" and id then
-                cacheRecentConsumableUse(id, select(3, GetItemInfo(id)))
+        local ok = pcall(function()
+            if method then
+                hooksecurefunc(target, method, callback)
+            else
+                hooksecurefunc(target, callback)
             end
         end)
-
-        hooksecurefunc("UseItemByName", function(itemRef)
-            cacheRecentConsumableUse(itemRef)
-        end)
+        return ok
     end
+
+    tryHook(C_Container, "UseContainerItem", function(bag, slot)
+        cacheRecentConsumableUseFromBag(bag, slot)
+    end)
+
+    tryHook("UseAction", nil, function(slot)
+        if type(GetActionInfo) ~= "function" then return end
+        local actionType, id = GetActionInfo(slot)
+        if actionType == "item" and id then
+            cacheRecentConsumableUse(id, type(getItemInfo) == "function" and select(3, getItemInfo(id)) or nil)
+        end
+    end)
+
+    tryHook("UseItemByName", nil, function(itemRef)
+        cacheRecentConsumableUse(itemRef)
+    end)
+
+    ICN2._consumableHooksInstalled = true
 end
 
 installConsumableHooks()

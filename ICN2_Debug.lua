@@ -21,7 +21,12 @@ local function getArmorTier()
     local itemLink = GetInventoryItemLink("player", 5)
     if not itemLink then return "none (no chest)" end
 ---@diagnostic disable-next-line: deprecated
-    local _, _, _, _, _, _, subType = GetItemInfo(itemLink)
+    local getItemInfo = C_Item and C_Item.GetItemInfo or GetItemInfo
+    local subType
+    if type(getItemInfo) == "function" then
+        local _, _, _, _, _, _, value = getItemInfo(itemLink)
+        subType = value
+    end
     if not subType then return "unknown (not cached)" end
     if subType:find("Plate")   then return "PLATE"   end
     if subType:find("Mail")    then return "MAIL"    end

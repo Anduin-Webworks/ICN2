@@ -49,6 +49,12 @@ The Decay & rates tab offers five presets:
 
 Custom bias `0` means that need has no passive decay. Recovery effects can still apply.
 
+## Manual and timed recovery
+
+Open `/icn2` and select the **Restore** tab. The existing Eat, Drink, Rest, and Reset buttons provide immediate recovery; the deplete buttons are also there for testing or roleplay.
+
+For gradual recovery, select one or more needs, choose **Percent** or **Points**, set the amount, choose a duration from 1 to 60 minutes, then select **Begin recovery**. A percentage is measured against each selected need's maximum. For example, selecting Hunger and Thirst with **90%** and **5 minutes** adds up to 90% of each need's maximum over five minutes. Values are capped at each need's maximum, and regular decay and recovery continue during the timed action. A new timed action replaces the current one; **Cancel recovery** stops it early.
+
 ## HUD and appearance
 
 The General tab lets you:
@@ -82,7 +88,7 @@ When Hunger, Thirst, or Fatigue reaches the critical threshold (15% or less), IC
 - A need-specific warning asset appears along the top of the screen.
 - Each critical cue pulses three times, growing for one second and shrinking for one second.
 - The warning uses the need's color and stays away from the center of the screen.
-- A subtle sound plays when entering the critical tier.
+- A whistle sound plays when entering the critical tier.
 - Sound reminders repeat only after the configured interval, rather than on every update.
 - Warnings can be enabled independently for Hunger, Thirst, and Fatigue.
 - Visual opacity, sound, combat behavior, and reminder interval are configurable.
@@ -95,21 +101,22 @@ All commands begin with `/icn2`.
 
 | Command | What it does |
 |---|---|
-| `/icn2` or `/icn2 show` | Open the options menu |
+| `/icn2 help` | Show the command guide and examples |
+| `/icn2` or `/icn2 options` | Open the options menu (`show` also works) |
 | `/icn2 status` | Print current Hunger, Thirst, and Fatigue percentages |
 | `/icn2 details` | Show a readable status report with situation, rates, recovery, and effects |
 | `/icn2 debug` | Open the technical diagnostic window |
-| `/icn2 hud` | Toggle the HUD |
-| `/icn2 lock` | Toggle HUD position locking |
+| `/icn2 hud on`, `off`, or `toggle` | Set or toggle HUD visibility (`/icn2 hud` still toggles) |
+| `/icn2 hud lock` or `unlock` | Set HUD position locking (`/icn2 lock` still toggles) |
 | `/icn2 reset` | Restore all needs to full |
-| `/icn2 eat` | Restore 50 Hunger |
-| `/icn2 drink` | Restore 50 Thirst |
-| `/icn2 rest` | Restore 40 Fatigue |
-| `/icn2 starve` | Set Hunger to zero |
-| `/icn2 dehydrate` | Set Thirst to zero |
-| `/icn2 exhaust` | Set Fatigue to zero |
+| `/icn2 restore <needs> <amount>` | Immediately add points to one or more needs; use `hunger+thirst`, or `all` |
+| `/icn2 restore <needs> <percent>% over <time>` | Gradually restore a percentage of each selected maximum, such as `/icn2 restore hunger+thirst 90% over 5m` |
+| `/icn2 restore cancel` | Cancel the active timed recovery |
+| `/icn2 set <need> <percent>%` | Set one need to an exact percentage, including `0%` |
 
-The restore and deplete commands are useful for testing or for roleplay situations where you want to set a specific state manually.
+For timed commands, `<time>` accepts seconds (`30s`) or minutes (`5m`), up to 60 minutes. Percentages on `restore` mean that amount is added to each selected need; ordinary need changes continue during timed recovery. Points are assumed when the restore amount has no `%` sign.
+
+The previous shortcuts remain available: `/icn2 eat` adds 50 Hunger, `/icn2 drink` adds 50 Thirst, `/icn2 rest` adds 40 Fatigue, and `/icn2 starve`, `/icn2 dehydrate`, and `/icn2 exhaust` set the corresponding need to zero. These shortcuts are useful for quick testing and roleplay adjustments.
 
 ## Installation
 

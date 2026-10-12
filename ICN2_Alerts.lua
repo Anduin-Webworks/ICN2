@@ -197,6 +197,7 @@ function ICN2:InitAlerts()
 
     self._alertTiers = {}
     self._alertLastCue = {}
+    self._alertLastSoundAt = nil
     self._alertCurrentNeed = nil
     self._alertCurrentValue = nil
 end
@@ -242,8 +243,16 @@ function ICN2:UpdateAlerts(suppressSound)
 
     local lastCue = self._alertLastCue[need] or 0
     local interval = math.max(30, tonumber(setting("alertReminderInterval", 600)) or 600)
-    if criticalEntered or (now - lastCue >= interval) then
-        if playSound(need) then self._alertLastCue[need] = now end
+    local lastAnySound = self._alertLastSoundAt
+    local anySoundReady = not lastAnySound or (now - lastAnySound >= interval)
+    if anySoundReady and (criticalEntered or (now - lastCue >= interval)) then
+        -- Record the attempt regardless of PlaySound's return value.  On some
+        -- Retail/PTR clients PlaySound() can return nil even when it starts
+        -- playback; only recording successful returns would replay the cue on
+        -- every UpdateAlerts call.
+        self._alertLastCue[need] = now
+        self._alertLastSoundAt = now
+        playSound(need)
     end
 end
 

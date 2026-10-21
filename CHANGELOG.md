@@ -1,5 +1,16 @@
 # ICN2 CHANGELOG
 
+## v3.2.4
+
+### Housing detection and decay rules
+
+- Replaced the combined housing flag with separate inside-house and housing-neighborhood states.
+- Uses the Retail housing APIs when available, with legacy map IDs retained as a compatibility fallback.
+- Campfire detection no longer reports the player as being in housing.
+- Inside a house, Hunger decay is halved, Thirst decay is paused, and Fatigue receives slow recovery.
+- In a housing neighborhood, Hunger and Thirst decay are reduced to 75%, Fatigue decay is paused, and sitting provides fast Fatigue recovery.
+- Added housing state, detection source, and housing decay stages to debug output.
+
 ## v3.2.3
 
 ### PTR compatibility and alert fixes

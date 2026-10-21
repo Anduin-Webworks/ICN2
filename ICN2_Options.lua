@@ -249,7 +249,7 @@ function ICN2:BuildOptions()
     tabBtnGeneral = makeTabButton(sidebar, L["TAB_GENERAL"], -78, function() selectOptionsTab(1) end)
     tabBtnDecay = makeTabButton(sidebar, L["TAB_DECAY"], -124, function() selectOptionsTab(2) end)
     tabBtnRestore = makeTabButton(sidebar, L["TAB_RESTORE"], -170, function() selectOptionsTab(3) end)
-    makeLabel(sidebar, "3.2.0", 18, -230, "GameFontDisableSmall", COLORS.muted)
+    makeLabel(sidebar, "3.2.4", 18, -230, "GameFontDisableSmall", COLORS.muted)
     makeLabel(sidebar, "Changes apply instantly", 18, -253, "GameFontDisableSmall", COLORS.muted, 130)
 
     local content = CreateFrame("Frame", nil, optFrame)

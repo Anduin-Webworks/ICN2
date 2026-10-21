@@ -52,6 +52,19 @@ local function getActiveSituations()
         out.instance = sm.instance or {}
         return out
     end
+    if st.inHouse then
+        out.house = {
+            hunger = ICN2.HOUSING_DECAY and ICN2.HOUSING_DECAY.houseHunger or 0.5,
+            thirst = 0,
+            fatigue = "slow recovery",
+        }
+    elseif st.inNeighborhood then
+        out.neighborhood = {
+            hunger = ICN2.HOUSING_DECAY and ICN2.HOUSING_DECAY.neighborhoodNeeds or 0.75,
+            thirst = ICN2.HOUSING_DECAY and ICN2.HOUSING_DECAY.neighborhoodNeeds or 0.75,
+            fatigue = "paused; sitting recovery",
+        }
+    end
     if st.isResting then
         out.resting = sm.resting or {}
         return out
@@ -137,8 +150,8 @@ local function getFatigueRecovery()
         gain_per_sec = tier == "fast" and fr.fast
                     or tier == "slow" and fr.slow
                     or 0,
-        fast_threshold = "IsResting AND (isSitting OR nearCampfire OR inHousing)",
-        slow_threshold = "any single: isSitting | nearCampfire | inHousing | eating/drinking (isResting alone only pauses fatigue decay)",
+        fast_threshold = "sitting in IsResting, inHouse, or inNeighborhood; or IsResting with campfire",
+        slow_threshold = "inHouse, isSitting, nearCampfire, or eating/drinking (inNeighborhood alone only pauses fatigue decay)",
     }
 end
 
@@ -236,28 +249,33 @@ local function getRatePipeline()
         ICN2:_ApplyArmorModifier(rates)
         snapshot("6_armor_modifier")
     end
+
+    if ICN2._ApplyHousingDecayModifiers then
+        ICN2:_ApplyHousingDecayModifiers(rates)
+        snapshot("7_housing_decay_overlays")
+    end
     
     if ICN2._ApplyFoodDrinkRecovery then
         ICN2:_ApplyFoodDrinkRecovery(rates)
-        snapshot("7_food_drink_recovery")
+        snapshot("8_food_drink_recovery")
     end
     
     if ICN2._ApplySpellRecovery then
         ICN2:_ApplySpellRecovery(rates)
-        snapshot("8_spell_recovery")
+        snapshot("9_spell_recovery")
     end
 
     if ICN2._ApplyFatigueRecovery then
         ICN2:_ApplyFatigueRecovery(rates)
-        snapshot("9_fatigue_recovery")
+        snapshot("10_fatigue_recovery")
     end
     
     if ICN2._ApplyWellFedPause then
         ICN2:_ApplyWellFedPause(rates)
-        snapshot("10_well_fed_pause")
+        snapshot("11_well_fed_pause")
     end
     
-    snapshot("11_final")
+    snapshot("12_final")
     
     return pipeline
 end
@@ -344,7 +362,10 @@ local function buildSnapshot()
             isMounted   = st.isMounted   or false,
             isIndoors   = st.isIndoors   or false,
             nearCampfire = st.nearCampfire or false,
-            inHousing   = st.inHousing   or false,
+            inHouse     = st.inHouse     or false,
+            inNeighborhood = st.inNeighborhood or false,
+            housingDetectionSource = st.housingDetectionSource or "none",
+            housingMapID = st.housingMapID,
             inInstance  = st.inInstance  or false,
             standState  = getStandState(),
         },

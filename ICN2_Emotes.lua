@@ -121,9 +121,14 @@ function ICN2:CheckContextEmotes()
         sitting  = s.isSitting,
         resting  = s.isResting and not s.isSitting,
         campfire = s.nearCampfire,
-        housing  = s.inHousing and not s.nearCampfire,
+        house    = s.inHouse,
+        neighborhood = s.inNeighborhood,
         swimming = s.isSwimming,
     }
+
+    -- Keep one established housing emote set for now while tracking the two
+    -- housing contexts independently for entry/exit reactions.
+    local contextLists = ICN2.EMOTES.context
 
     -- Keep the baseline synchronized during combat so leaving combat does not
     -- create a false "just entered" reaction for every active context.
@@ -140,7 +145,8 @@ function ICN2:CheckContextEmotes()
     else
         for name, active in pairs(contexts) do
             if active and not previousContext[name] then
-                if scheduleEmote(ICN2.EMOTES.context[name], 0.7, 0.65) then break end
+                local list = contextLists[name] or contextLists.housing
+                if scheduleEmote(list, 0.7, 0.65) then break end
             end
         end
         previousContext = contexts

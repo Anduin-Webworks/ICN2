@@ -29,8 +29,10 @@ Needs normally decay over real time. The current situation changes the rate, so 
 - Combat increases the pressure on your needs.
 - Swimming, flying, and mounted travel use their own movement modifiers.
 - Rested areas reduce Hunger and Thirst decay and pause Fatigue decay. A rested area alone does not restore Fatigue.
-- Sitting, eating or drinking, campfires, and housing can restore Fatigue.
-- Sitting in a rested area, or using a campfire or housing while rested, provides faster Fatigue recovery.
+- Inside a house, Hunger decays at half its otherwise calculated rate, Thirst decay is paused, and Fatigue slowly recovers.
+- In a housing neighborhood, Hunger and Thirst decay at 75% of their otherwise calculated rates, while Fatigue decay is paused.
+- Sitting inside a house or housing neighborhood provides faster Fatigue recovery.
+- Sitting, eating or drinking, and campfires continue to provide their existing Fatigue recovery effects in addition to these housing rules.
 - Entering combat, moving, jumping, casting, mounting, or standing ends the sitting state.
 - A Well Fed effect can temporarily pause Hunger decay.
 - Race, class, armor, and empty needs can affect the final rate.
@@ -75,7 +77,7 @@ ICN2 can perform layered, context-aware emotes when a need reaches a low or crit
 
 - Need reactions occur when Hunger, Thirst, or Fatigue enters a low or critical tier.
 - Recovery reactions can occur when a need returns to a healthy level.
-- Context reactions can occur when sitting, resting, using a campfire, entering housing, or beginning to swim.
+- Context reactions can occur when sitting, resting, using a campfire, entering a house or housing neighborhood, or beginning to swim.
 - Sparse ambient reactions can occur while sitting, resting, or dealing with a low need. They are controlled separately.
 - All emotes are suppressed during combat, including reactions that were delayed before combat began.
 

@@ -9,8 +9,8 @@ local L = setmetatable({}, { __index = function(_, k)
     return ICN2.L and ICN2.L[k] or k
 end })
 
--- Reset savedvariables.decayrates to new 2.0 logic
-local CURRENT_VERSION = 320
+-- Saved-variable schema version for migrations.
+local CURRENT_VERSION = 324
 
 function ICN2:RunMigrations()
     if not ICN2DB.settings then
@@ -65,6 +65,11 @@ function ICN2:RunMigrations()
     if not ICN2DB.version or ICN2DB.version < 320 then
         ICN2DB.version = CURRENT_VERSION
         print("|cFFFF6600ICN2|r: Context-aware emotes added in v3.2.0.")
+    end
+
+    if not ICN2DB.version or ICN2DB.version < 324 then
+        ICN2DB.version = CURRENT_VERSION
+        print("|cFFFF6600ICN2|r: Housing detection and decay rules updated in v3.2.4.")
     end
 end
 
@@ -392,6 +397,14 @@ ICN2.FATIGUE_RECOVERY = {
     fast = 100 / 300,   -- ~0.333 pts/s → 100 points in ~5 minutes
 }
 
+-- ── Housing decay overlays ───────────────────────────────────────────────────
+-- These are applied after the normal decay modifiers but before consumable and
+-- other positive recovery effects.  They affect decay only, not recovery.
+ICN2.HOUSING_DECAY = {
+    houseHunger        = 0.50, -- inside the house: hunger decays half as fast
+    neighborhoodNeeds  = 0.75, -- neighborhood: hunger/thirst decay 25% slower
+}
+
 -- ── Aura patterns for campfire / cozy fire detection ─────────────────────────
 -- Matched against buff names on the player.
 ICN2.CAMPFIRE_PATTERNS = {
@@ -401,7 +414,9 @@ ICN2.CAMPFIRE_PATTERNS = {
     "bonfire",
 }
 
--- ── Housing zone detection ────────────────────────────────────────────────────
+-- ── Legacy housing map fallback ──────────────────────────────────────────────
+-- Retail housing APIs are preferred by State.lua.  This list remains a fallback
+-- for clients/builds where C_Housing is unavailable or incomplete.
 ICN2.HOUSING_MAP_IDS = {
     [2736] = true, -- Housing neighborhood (Razorwind Shores)
     [3027] = true, -- Warband Housing neighborhood (Razorwind Shores)

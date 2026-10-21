@@ -20,7 +20,10 @@ ICN2.State = {
     isMounted   = false, -- IsMounted()
     isIndoors   = false, -- IsIndoors()
     nearCampfire = false,-- player has a Cozy Fire / campfire buff
-    inHousing   = false, -- player is in a housing zone/plot
+    inHouse     = false, -- player is inside a house interior
+    inNeighborhood = false, -- player is outdoors on a housing neighborhood map
+    housingDetectionSource = "none", -- API or legacy map fallback used for housing
+    housingMapID = nil, -- current UI map ID, exposed for diagnostics
     inInstance  = false, -- IsInInstance() — dungeon, raid, BG, arena (aura scanning disabled)
 }
 
@@ -94,6 +97,56 @@ function ICN2:InitSittingHooks()
     end
 end
 
+-- ── Housing detection ────────────────────────────────────────────────────────
+-- Housing is deliberately independent from aura scanning.  Campfires and
+-- housing are separate facts and must never populate the same state flag.
+local function queryHousingAPI(method)
+    if not C_Housing or type(C_Housing[method]) ~= "function" then
+        return nil
+    end
+
+    local ok, result = pcall(C_Housing[method])
+    if not ok then return nil end
+    return result and true or false
+end
+
+local function getPlayerMapID()
+    if not C_Map or type(C_Map.GetBestMapForUnit) ~= "function" then
+        return nil
+    end
+
+    local ok, mapID = pcall(C_Map.GetBestMapForUnit, "player")
+    return ok and mapID or nil
+end
+
+local function detectHousing()
+    local mapID = getPlayerMapID()
+    local apiHouse = queryHousingAPI("IsInsideHouse")
+    local apiNeighborhood = queryHousingAPI("IsOnNeighborhoodMap")
+
+    if apiHouse ~= nil or apiNeighborhood ~= nil then
+        local inHouse = apiHouse == true
+        local inNeighborhood = apiNeighborhood
+        local source
+        if inNeighborhood == nil then
+            inNeighborhood = mapID ~= nil and ICN2.HOUSING_MAP_IDS[mapID] == true
+            source = "C_Housing.IsInsideHouse+map_fallback"
+        elseif apiHouse ~= nil then
+            source = "C_Housing"
+        else
+            source = "C_Housing.IsOnNeighborhoodMap"
+        end
+        inNeighborhood = inNeighborhood == true and not inHouse
+        return inHouse, inNeighborhood, source, mapID
+    end
+
+    -- Compatibility fallback for builds without the Retail housing API.  The
+    -- legacy map list can identify a neighborhood but cannot identify a house
+    -- interior, so it conservatively maps only to the neighborhood state.
+    local inNeighborhood = mapID ~= nil and ICN2.HOUSING_MAP_IDS[mapID] == true
+    return false, inNeighborhood, "map_fallback", mapID
+end
+
 -- ── UpdateState ───────────────────────────────────────────────────────────────
 function ICN2:UpdateState()
     local s = ICN2.State
@@ -110,16 +163,23 @@ function ICN2:UpdateState()
     s.inInstance = inInst and (instType == "party" or instType == "raid" 
                               or instType == "pvp" or instType == "arena")
 
+    local inHouse, inNeighborhood, housingSource, housingMapID = detectHousing()
+    s.inHouse = inHouse
+    s.inNeighborhood = inNeighborhood
+    s.housingDetectionSource = housingSource
+    s.housingMapID = housingMapID
+
     -- ── Instance mode: skip aura scanning ─────────────────────────────────────
     if s.inInstance then
         s.nearCampfire = false
-        s.inHousing    = false
+        s.inHouse      = false
+        s.inNeighborhood = false
+        s.housingDetectionSource = "instance_override"
         return
     end
 
     if ICN2._auraAccessBlocked then
         s.nearCampfire = false
-        s.inHousing    = false
         return
     end
 
@@ -146,7 +206,4 @@ function ICN2:UpdateState()
     end
 
     s.nearCampfire = campfireFound
-
-    local mapID = C_Map.GetBestMapForUnit("player")
-    s.inHousing = campfireFound or (mapID ~= nil and ICN2.HOUSING_MAP_IDS[mapID] == true)
 end

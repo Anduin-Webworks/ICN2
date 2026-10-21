@@ -51,6 +51,8 @@ L["DETAILS_SITUATION_MOUNTED"]  = "mounted"
 L["DETAILS_SITUATION_FLYING"]   = "flying"
 L["DETAILS_SITUATION_SWIMMING"] = "swimming"
 L["DETAILS_SITUATION_INDOORS"]  = "indoors"
+L["DETAILS_SITUATION_HOUSE"]     = "inside house"
+L["DETAILS_SITUATION_NEIGHBORHOOD"] = "in housing neighborhood"
 L["DETAILS_HUNGER_LINE"]      = "|cFF00FF00Hunger|r  %.1f%%  (%.1f / %d pts)  net %+.4f pts/min"
 L["DETAILS_THIRST_LINE"]      = "|cFF4499FFThirst|r  %.1f%%  (%.1f / %d pts)  net %+.4f pts/min"
 L["DETAILS_FATIGUE_LINE"]     = "|cFFFFDD00Fatigue|r %.1f%%  (%.1f / %d pts)  net %+.4f pts/min  (recovery %+.4f pts/min [%s])"
@@ -72,6 +74,8 @@ L["SIT_FLYING"]    = "Flying (H×%.2f T×%.2f F×%.2f)"
 L["SIT_SWIMMING"]  = "Swimming (H×%.2f T×%.2f F×%.2f)"
 L["SIT_COMBAT"]    = "Combat (H×%.2f T×%.2f F×%.2f)"
 L["SIT_INDOORS"]   = "Indoors (H×%.2f T×%.2f F×%.2f)"
+L["SIT_HOUSE"]     = "Inside house (H×%.2f T paused; F recovery: slow / sitting: fast)"
+L["SIT_NEIGHBORHOOD"] = "Housing neighborhood (H×%.2f T×%.2f; F paused / sitting: fast)"
 L["SIT_RACE"]      = "Race:%s (H×%.2f T×%.2f F×%.2f)"
 L["SIT_CLASS"]     = "Class:%s (H×%.2f T×%.2f F×%.2f)"
 
@@ -83,6 +87,8 @@ L["PRESET_NAMED"]   = "%s (global ×%.2f — slider display %d on 0–%d scale)"
 L["SRC_RESTED_AREA"]    = "rested area"
 L["SRC_CAMPFIRE"]       = "campfire"
 L["SRC_HOUSING"]        = "housing"
+L["SRC_HOUSE"]          = "inside house"
+L["SRC_NEIGHBORHOOD"]   = "housing neighborhood"
 L["SRC_SITTING"]        = "sitting"
 L["SRC_EAT_DRINK"]      = "eating/drinking"
 
@@ -102,7 +108,7 @@ L["TOOLTIP_HINT"]    = "|cFFAAAAAA/icn2 show|r"
 L["HUD_TITLE"]       = "Character Needs"
 
 -- Options panel — title
-L["OPT_TITLE"] = "|cFFFF6600ICN2|r – Character Needs  |cFF888888v3.2.0|r"
+L["OPT_TITLE"] = "|cFFFF6600ICN2|r – Character Needs  |cFF888888v3.2.4|r"
 
 -- Options — tab labels
 L["TAB_GENERAL"] = "General"
@@ -240,7 +246,7 @@ if GetLocale() == "ptBR" then
     L["TOOLTIP_FATIGUE"] = "Fadiga: %.1f%%"
     L["HUD_TITLE"]       = "Necessidades do Personagem"
 
-    L["OPT_TITLE"]             = "|cFFFF6600ICN2|r – Necessidades do Personagem  |cFF888888v3.2.0|r"
+    L["OPT_TITLE"]             = "|cFFFF6600ICN2|r – Necessidades do Personagem  |cFF888888v3.2.4|r"
     L["TAB_GENERAL"]           = "Geral"
     L["TAB_DECAY"]             = "Decaimento"
     L["TAB_RESTORE"]           = "Restaurar"
@@ -287,6 +293,8 @@ if GetLocale() == "ptBR" then
     L["SRC_RESTED_AREA"] = "área de descanso"
     L["SRC_CAMPFIRE"]    = "fogueira"
     L["SRC_HOUSING"]     = "moradia"
+    L["SRC_HOUSE"]       = "dentro de casa"
+    L["SRC_NEIGHBORHOOD"] = "bairro residencial"
     L["SRC_SITTING"]     = "sentado"
     L["SRC_EAT_DRINK"]   = "comendo/bebendo"
 
@@ -358,7 +366,7 @@ if GetLocale() == "esES" or GetLocale() == "esMX" then
     L["TOOLTIP_FATIGUE"] = "Fatiga:  %.1f%%"
     L["HUD_TITLE"]       = "Necesidades del Personaje"
 
-    L["OPT_TITLE"]             = "|cFFFF6600ICN2|r – Necesidades del Personaje  |cFF888888v3.2.0|r"
+    L["OPT_TITLE"]             = "|cFFFF6600ICN2|r – Necesidades del Personaje  |cFF888888v3.2.4|r"
     L["TAB_GENERAL"]           = "General"
     L["TAB_DECAY"]             = "Decaimiento"
     L["TAB_RESTORE"]           = "Restaurar"
@@ -405,6 +413,8 @@ if GetLocale() == "esES" or GetLocale() == "esMX" then
     L["SRC_RESTED_AREA"] = "área de descanso"
     L["SRC_CAMPFIRE"]    = "hoguera"
     L["SRC_HOUSING"]     = "vivienda"
+    L["SRC_HOUSE"]       = "dentro de la casa"
+    L["SRC_NEIGHBORHOOD"] = "barrio residencial"
     L["SRC_SITTING"]     = "sentado"
     L["SRC_EAT_DRINK"]   = "comiendo/bebiendo"
 
@@ -476,7 +486,7 @@ if GetLocale() == "frFR" then
     L["TOOLTIP_FATIGUE"] = "Fatigue : %.1f%%"
     L["HUD_TITLE"]       = "Besoins du Personnage"
 
-    L["OPT_TITLE"]             = "|cFFFF6600ICN2|r – Besoins du Personnage  |cFF888888v3.2.0|r"
+    L["OPT_TITLE"]             = "|cFFFF6600ICN2|r – Besoins du Personnage  |cFF888888v3.2.4|r"
     L["TAB_GENERAL"]           = "Général"
     L["TAB_DECAY"]             = "Décroissance"
     L["TAB_RESTORE"]           = "Restauration"
@@ -523,6 +533,8 @@ if GetLocale() == "frFR" then
     L["SRC_RESTED_AREA"] = "zone de repos"
     L["SRC_CAMPFIRE"]    = "feu de camp"
     L["SRC_HOUSING"]     = "logement"
+    L["SRC_HOUSE"]       = "dans la maison"
+    L["SRC_NEIGHBORHOOD"] = "quartier résidentiel"
     L["SRC_SITTING"]     = "assis"
     L["SRC_EAT_DRINK"]   = "manger/boire"
 
@@ -594,7 +606,7 @@ if GetLocale() == "deDE" then
     L["TOOLTIP_FATIGUE"] = "Erschöpfung:  %.1f%%"
     L["HUD_TITLE"]       = "Charakterbedürfnisse"
 
-    L["OPT_TITLE"]             = "|cFFFF6600ICN2|r – Charakterbedürfnisse  |cFF888888v3.2.0|r"
+    L["OPT_TITLE"]             = "|cFFFF6600ICN2|r – Charakterbedürfnisse  |cFF888888v3.2.4|r"
     L["TAB_GENERAL"]           = "Allgemein"
     L["TAB_DECAY"]             = "Verfall & Raten"
     L["TAB_RESTORE"]           = "Erholung"
@@ -641,6 +653,8 @@ if GetLocale() == "deDE" then
     L["SRC_RESTED_AREA"] = "Ruhegebiet"
     L["SRC_CAMPFIRE"]    = "Lagerfeuer"
     L["SRC_HOUSING"]     = "Unterkunft"
+    L["SRC_HOUSE"]       = "im Haus"
+    L["SRC_NEIGHBORHOOD"] = "Wohnviertel"
     L["SRC_SITTING"]     = "sitzend"
     L["SRC_EAT_DRINK"]   = "essen/trinken"
 

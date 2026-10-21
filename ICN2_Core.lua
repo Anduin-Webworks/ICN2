@@ -15,6 +15,7 @@
 --     └─ _ApplySituationModifiers
 --     └─ _ApplyRaceClassModifiers
 --     └─ _ApplyArmorModifier
+--     └─ _ApplyHousingDecayModifiers
 --     └─ _ApplyFoodDrinkRecovery
 --     └─ _ApplyFatigueRecovery
 --     └─ _ApplyWellFedPause
@@ -356,7 +357,26 @@ function ICN2:_ApplyArmorModifier(rates)
     rates.fatigue = rates.fatigue * armor
 end
 
--- ── 7. Food / drink recovery ──────────────────────────────────────────────────
+-- ── 7. Housing decay overlays ────────────────────────────────────────────────
+-- Applies only to the negative decay already calculated by the normal pipeline.
+-- Food, drink, spell, and fatigue recovery are applied afterward and therefore
+-- remain at their normal strength.
+function ICN2:_ApplyHousingDecayModifiers(rates)
+    local st = ICN2.State
+    local hm = ICN2.HOUSING_DECAY
+    if not st or not hm then return end
+
+    if st.inHouse then
+        rates.hunger = rates.hunger * hm.houseHunger
+        if rates.thirst < 0 then rates.thirst = 0 end
+    elseif st.inNeighborhood then
+        rates.hunger  = rates.hunger * hm.neighborhoodNeeds
+        rates.thirst  = rates.thirst * hm.neighborhoodNeeds
+        if rates.fatigue < 0 then rates.fatigue = 0 end
+    end
+end
+
+-- ── 8. Food / drink recovery ──────────────────────────────────────────────────
 -- Adds a positive trickle to hunger/thirst while the eating/drinking buff is active.
 local FOOD_TRICKLE = { simple = 30.0, complex = 40.0, feast = 60.0 }
 
@@ -383,11 +403,12 @@ function ICN2:_ApplyFoodDrinkRecovery(rates)
     end
 end
 
--- ── 8. Fatigue recovery ───────────────────────────────────────────────────────
+-- ── 9. Fatigue recovery ───────────────────────────────────────────────────────
 -- Tiers:
---   fast → resting while sitting, near a campfire, or in housing
---   slow → sitting, campfire, housing, or eating/drinking
---   none → no qualifying condition, or in combat
+--   fast → sitting in a rested area, house, or neighborhood; or rested area
+--           combined with a campfire
+--   slow → house, sitting, campfire, or eating/drinking
+--   none → no qualifying condition, neighborhood alone, or in combat
 -- A rested area by itself pauses fatigue decay but does not recover it.
 function ICN2:_ApplyFatigueRecovery(rates)
     local st = ICN2.State
@@ -404,21 +425,24 @@ function ICN2:_ApplyFatigueRecovery(rates)
     local tier       = "none"
     local recFast    = ICN2.FATIGUE_RECOVERY.fast
     local recSlow    = ICN2.FATIGUE_RECOVERY.slow
+    local fastFromHousing = st.isSitting and (st.inHouse or st.inNeighborhood)
+    local fastFromResting = st.isResting and (st.isSitting or st.nearCampfire)
 
-    if st.isResting and (st.isSitting or st.nearCampfire or st.inHousing) then
+    if fastFromHousing or fastFromResting then
         gain = recFast
         tier = "fast"
-        table.insert(src, L["SRC_RESTED_AREA"])
+        if st.isResting then table.insert(src, L["SRC_RESTED_AREA"]) end
         if st.isSitting    then table.insert(src, L["SRC_SITTING"])   end
         if st.nearCampfire then table.insert(src, L["SRC_CAMPFIRE"]) end
-        if st.inHousing    then table.insert(src, L["SRC_HOUSING"])  end
-    elseif st.isSitting or st.nearCampfire or st.inHousing or isEatDrink then
+        if st.inHouse      then table.insert(src, L["SRC_HOUSE"])     end
+        if st.inNeighborhood then table.insert(src, L["SRC_NEIGHBORHOOD"]) end
+    elseif st.isSitting or st.nearCampfire or st.inHouse or isEatDrink then
         gain = recSlow
         tier = "slow"
         if st.isResting    then table.insert(src, L["SRC_RESTED_AREA"])  end
         if st.isSitting    then table.insert(src, L["SRC_SITTING"])      end
         if st.nearCampfire then table.insert(src, L["SRC_CAMPFIRE"])     end
-        if st.inHousing    then table.insert(src, L["SRC_HOUSING"])      end
+        if st.inHouse      then table.insert(src, L["SRC_HOUSE"])        end
         if isEatDrink      then table.insert(src, L["SRC_EAT_DRINK"])    end
     end
 
@@ -427,7 +451,7 @@ function ICN2:_ApplyFatigueRecovery(rates)
     ICN2._fatigueRecoverySrc  = table.concat(src, ", ")
 end
 
--- ── 9. Well Fed pause ─────────────────────────────────────────────────────────
+-- ── 10. Well Fed pause ────────────────────────────────────────────────────────
 -- If the Well Fed buff was refreshed within the last 5 minutes, pause hunger decay by zeroing out any negative hunger rate; does not affect thirst or fatigue
 function ICN2:_ApplyWellFedPause(rates)
     if ICN2._wellFedPauseExpiry and GetTime() < ICN2._wellFedPauseExpiry then
@@ -445,6 +469,7 @@ function ICN2:GetCurrentRates()
     self:_ApplySelfModifiers(rates)
     self:_ApplyCrossNeedModifiers(rates)
     self:_ApplyArmorModifier(rates)
+    self:_ApplyHousingDecayModifiers(rates)
     self:_ApplyFoodDrinkRecovery(rates)
     self:_ApplySpellRecovery(rates)
     self:_ApplyFatigueRecovery(rates)
@@ -598,6 +623,7 @@ end
 -- I register for all relevant events on the single frame, and handle them in a unified OnEvent function. This keeps the event handling logic centralized and easier to manage.
 frame:RegisterEvent("ADDON_LOADED")
 frame:RegisterEvent("PLAYER_LOGIN")
+frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 frame:RegisterEvent("PLAYER_LOGOUT")
 frame:RegisterEvent("PLAYER_REGEN_ENABLED")
 frame:RegisterEvent("PLAYER_REGEN_DISABLED")
@@ -608,6 +634,11 @@ frame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
 frame:RegisterEvent("UNIT_SPELLCAST_START")
 frame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 frame:RegisterEvent("UNIT_AURA")
+frame:RegisterEvent("ZONE_CHANGED")
+frame:RegisterEvent("ZONE_CHANGED_INDOORS")
+frame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+frame:RegisterEvent("HOUSE_PLOT_ENTERED")
+frame:RegisterEvent("HOUSE_PLOT_EXITED")
 
 frame:SetScript("OnEvent", function(self, event, ...)
 -- unified event handler for all registered events; dispatches to the appropriate logic based on the event type
@@ -631,6 +662,14 @@ frame:SetScript("OnEvent", function(self, event, ...)
         end)
         ICN2:UpdateHUD()
         ICN2:UpdateAlerts(true)
+
+    elseif event == "PLAYER_ENTERING_WORLD"
+        or event == "ZONE_CHANGED"
+        or event == "ZONE_CHANGED_INDOORS"
+        or event == "ZONE_CHANGED_NEW_AREA"
+        or event == "HOUSE_PLOT_ENTERED"
+        or event == "HOUSE_PLOT_EXITED" then
+        ICN2:UpdateState()
 
     elseif event == "PLAYER_LOGOUT" then
         ICN2DB.lastLogout = time()
@@ -797,6 +836,15 @@ local function getSituationLabels()
         return labels  -- Instance mode overrides all other situational displays
     end
 
+    if st.inHouse then
+        local hm = ICN2.HOUSING_DECAY or {}
+        table.insert(labels, string.format(L["SIT_HOUSE"], hm.houseHunger or 0.5))
+    elseif st.inNeighborhood then
+        local hm = ICN2.HOUSING_DECAY or {}
+        local mult = hm.neighborhoodNeeds or 0.75
+        table.insert(labels, string.format(L["SIT_NEIGHBORHOOD"], mult, mult))
+    end
+
     if st.isResting then
         table.insert(labels, string.format(L["SIT_RESTING"],
             sm.resting.hunger, sm.resting.thirst, sm.resting.fatigue))
@@ -849,6 +897,8 @@ function ICN2:PrintDetails() -- prints a player-friendly status summary; raw mul
     local situation = L["DETAILS_SITUATION_IDLE"]
     local st = ICN2.State
     if st.inInstance then situation = L["DETAILS_SITUATION_INSTANCE"]
+    elseif st.inHouse then situation = L["DETAILS_SITUATION_HOUSE"]
+    elseif st.inNeighborhood then situation = L["DETAILS_SITUATION_NEIGHBORHOOD"]
     elseif st.isResting then situation = L["DETAILS_SITUATION_RESTING"]
     elseif st.inCombat then situation = L["DETAILS_SITUATION_COMBAT"]
     elseif st.isMounted then situation = L["DETAILS_SITUATION_MOUNTED"]

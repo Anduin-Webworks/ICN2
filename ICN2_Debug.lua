@@ -56,13 +56,13 @@ local function getActiveSituations()
         out.house = {
             hunger = ICN2.HOUSING_DECAY and ICN2.HOUSING_DECAY.houseHunger or 0.5,
             thirst = 0,
-            fatigue = "slow recovery",
+            fatigue = "additive environmental recovery",
         }
     elseif st.inNeighborhood then
         out.neighborhood = {
             hunger = ICN2.HOUSING_DECAY and ICN2.HOUSING_DECAY.neighborhoodNeeds or 0.75,
             thirst = ICN2.HOUSING_DECAY and ICN2.HOUSING_DECAY.neighborhoodNeeds or 0.75,
-            fatigue = "paused; sitting recovery",
+            fatigue = "additive environmental recovery; decay overlay still pauses fatigue decay",
         }
     end
     if st.isResting then
@@ -141,17 +141,18 @@ end
 -- Determines the current fatigue recovery tier and gain rate based on internal state.
 -- Fatigue recovery provides bonus fatigue gain under certain conditions.
 local function getFatigueRecovery()
-    local tier = ICN2._fatigueRecoveryTier or "none"
-    local src  = ICN2._fatigueRecoverySrc  or ""
-    local fr   = ICN2.FATIGUE_RECOVERY or {}
+    local state = ICN2._fatigueRecoveryState or {}
+    local tier = state.tier or ICN2._fatigueRecoveryTier or "none"
+    local src  = ICN2._fatigueRecoverySrc or ""
     return {
         tier         = tier,
         sources      = src ~= "" and src or nil,
-        gain_per_sec = tier == "fast" and fr.fast
-                    or tier == "slow" and fr.slow
-                    or 0,
-        fast_threshold = "sitting in IsResting, inHouse, or inNeighborhood; or IsResting with campfire",
-        slow_threshold = "inHouse, isSitting, nearCampfire, or eating/drinking (inNeighborhood alone only pauses fatigue decay)",
+        environmental_recovery_per_sec = state.environmental or 0,
+        race_multiplier = state.raceMultiplier or 1.0,
+        net_per_sec = state.net,
+        contributions = state.contributions or {},
+        combat_aura_snapshot_active = ICN2.State and ICN2.State.combatAuraSnapshot ~= nil or false,
+        tier_rule = "final net fatigue rate: low > 0, medium >= configured medium threshold, high >= configured high threshold",
     }
 end
 
@@ -274,8 +275,13 @@ local function getRatePipeline()
         ICN2:_ApplyWellFedPause(rates)
         snapshot("11_well_fed_pause")
     end
+
+    if ICN2._ApplyTimedManualRecoveryPreview then
+        ICN2:_ApplyTimedManualRecoveryPreview(rates)
+        snapshot("12_timed_manual_recovery")
+    end
     
-    snapshot("12_final")
+    snapshot("13_final")
     
     return pipeline
 end
@@ -367,6 +373,7 @@ local function buildSnapshot()
             housingDetectionSource = st.housingDetectionSource or "none",
             housingMapID = st.housingMapID,
             inInstance  = st.inInstance  or false,
+            combatAuraSnapshot = st.combatAuraSnapshot,
             standState  = getStandState(),
         },
 

@@ -25,6 +25,7 @@ ICN2.State = {
     housingDetectionSource = "none", -- API or legacy map fallback used for housing
     housingMapID = nil, -- current UI map ID, exposed for diagnostics
     inInstance  = false, -- IsInInstance() — dungeon, raid, BG, arena (aura scanning disabled)
+    combatAuraSnapshot = nil, -- last aura-derived recovery facts observed before combat
 }
 
 -- Sitting is not represented reliably by a player aura.  It is therefore an
@@ -39,6 +40,20 @@ end
 
 function ICN2:ClearSitting()
     self:SetSitting(false)
+end
+
+-- Blizzard may expose protected/secret aura data during combat.  Capture the
+-- last reliable aura-derived recovery state before combat and keep it stable
+-- until aura scanning becomes safe again.
+function ICN2:BeginCombatAuraSnapshot()
+    local s = ICN2.State
+    s.combatAuraSnapshot = {
+        nearCampfire = s.nearCampfire and true or false,
+    }
+end
+
+function ICN2:EndCombatAuraSnapshot()
+    ICN2.State.combatAuraSnapshot = nil
 end
 
 -- Install these after PLAYER_LOGIN.  Some of the protected Blizzard action
@@ -178,13 +193,17 @@ function ICN2:UpdateState()
         return
     end
 
-    if ICN2._auraAccessBlocked then
-        s.nearCampfire = false
+    -- ── Aura-based detection ──────────────────────────────────────────────
+    -- Do not clear aura-derived recovery facts in combat.  The last known
+    -- value is the only safe value available until PLAYER_REGEN_ENABLED.
+    if s.inCombat or UnitAffectingCombat("player") then
+        if s.combatAuraSnapshot then
+            s.nearCampfire = s.combatAuraSnapshot.nearCampfire
+        end
         return
     end
 
-    -- ── Aura-based detection ──────────────────────────────────────────────
-    if s.inCombat or UnitAffectingCombat("player") then
+    if ICN2._auraAccessBlocked then
         s.nearCampfire = false
         return
     end

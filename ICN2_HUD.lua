@@ -406,8 +406,21 @@ local function getNeedColor(key, val, theme)
     end
 end
 
-local function getIndicatorAsset(rate, theme)
+local function getIndicatorAsset(needKey, rate, theme)
     local ind = theme.assets.indicators
+    if needKey == "fatigue" then
+        local thresholds = ICN2.FATIGUE_RATE_THRESHOLDS or {}
+        local stable = thresholds.stable or STABLE_EPSILON
+        local medium = thresholds.medium or IND_FAST_UP
+        local high = thresholds.high or IND_FASTER_UP
+        if math.abs(rate) <= stable then return ind.stable, 1, 1, 1
+        elseif rate >= high then return ind.up3, 1, 1, 1
+        elseif rate >= medium then return ind.up2, 1, 1, 1
+        elseif rate > 0 then return ind.up1, 1, 1, 1
+        elseif rate <= IND_FASTER_DOWN then return ind.down3, 1, 1, 1
+        elseif rate <= IND_FAST_DOWN then return ind.down2, 1, 1, 1
+        else return ind.down1, 1, 1, 1 end
+    end
     if math.abs(rate) <= STABLE_EPSILON then return ind.stable, 1, 1, 1
     elseif rate >= IND_FASTER_UP        then return ind.up3,   1, 1, 1
     elseif rate >= IND_FAST_UP          then return ind.up2,   1, 1, 1
@@ -847,6 +860,9 @@ function ICN2:UpdateHUD()
     local theme = getTheme()
     local values = { hunger = ICN2:GetNeedPercent("hunger"), thirst = ICN2:GetNeedPercent("thirst"), fatigue = ICN2:GetNeedPercent("fatigue") }
     local rates = ICN2:GetCurrentRates()
+    if ICN2._ApplyTimedManualRecoveryPreview then
+        ICN2:_ApplyTimedManualRecoveryPreview(rates)
+    end
     local labelMode = ICN2DB.settings.barLabelMode or "percentage"
 
     for _, key in ipairs(NEED_KEYS) do
@@ -929,7 +945,7 @@ function ICN2:UpdateHUD()
                 end
             end
 
-            local assetPath, ir, ig, ib = getIndicatorAsset(rates[key] or 0, theme)
+            local assetPath, ir, ig, ib = getIndicatorAsset(key, rates[key] or 0, theme)
             data.glyphTex:SetTexture(assetPath)
             data.glyphTex:SetVertexColor(ir, ig, ib)
             data.setPulse(shouldPulse(assetPath, theme))

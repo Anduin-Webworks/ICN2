@@ -45,8 +45,9 @@ local armorFatigueCache = nil
 ICN2._lastRates             = { hunger = 0, thirst = 0, fatigue = 0 }   -- last calculated rates from GetCurrentRates(), for display in /icn2 details
 ICN2._lastWellFedInstanceID = nil                                       -- to track when the "Well Fed" buff is refreshed;
 ICN2._wellFedPauseExpiry    = 0                                         -- timestamp when the current "Well Fed" pause expires; if GetTime() < this value, hunger decay is paused
-ICN2._fatigueRecoveryTier   = "none"                                    -- "fast", "slow", or "none" based on current conditions (for PrintDetails)
-ICN2._fatigueRecoverySrc    = ""                                        -- human-readable description of the source of fatigue recovery (e.g. "resting near campfire") for display in PrintDetails
+ICN2._fatigueRecoveryTier   = "none"                                    -- "low", "medium", "high", or "none" based on the final net rate
+ICN2._fatigueRecoverySrc    = ""                                        -- human-readable list of active fatigue recovery sources for PrintDetails
+ICN2._fatigueRecoveryState  = { tier = "none", sources = {}, environmental = 0, raceMultiplier = 1.0, net = 0 }
 ICN2._crossNeedActive       = {}                                        -- list of active cross-need modifiers for display in PrintDetails (e.g. "hunger → fatigue coupling")
 ICN2._manualRecovery        = nil                                       -- one timed manual recovery plan, applied evenly across its duration
 
@@ -404,49 +405,66 @@ function ICN2:_ApplyFoodDrinkRecovery(rates)
 end
 
 -- ── 9. Fatigue recovery ───────────────────────────────────────────────────────
--- Tiers:
---   fast → sitting in a rested area, house, or neighborhood; or rested area
---           combined with a campfire
---   slow → house, sitting, campfire, or eating/drinking
---   none → no qualifying condition, neighborhood alone, or in combat
--- A rested area by itself pauses fatigue decay but does not recover it.
+-- Environmental recovery is additive.  Combat contributes to decay, but does
+-- not erase recovery states that were safely observed before combat began.
+local function getFatigueRecoveryTier(rate)
+    local thresholds = ICN2.FATIGUE_RATE_THRESHOLDS or {}
+    local stable = thresholds.stable or 0.002
+    local medium = thresholds.medium or 0.167
+    local high = thresholds.high or 0.278
+    if rate <= stable then return "none" end
+    if rate >= high then return "high" end
+    if rate >= medium then return "medium" end
+    return "low"
+end
+
 function ICN2:_ApplyFatigueRecovery(rates)
     local st = ICN2.State
-    if st.inCombat then
-        ICN2._fatigueRecoveryTier = "none"
-        ICN2._fatigueRecoverySrc  = ""
-        return
+    local recovery = ICN2.FATIGUE_RECOVERY or {}
+    local src = {}
+    local contributions = {}
+    local environmental = 0
+
+    local function addRecovery(key, label, active)
+        if not active then return end
+        local amount = tonumber(recovery[key]) or 0
+        environmental = environmental + amount
+        contributions[key] = amount
+        table.insert(src, label)
     end
+
+    addRecovery("resting", L["SRC_RESTED_AREA"], st.isResting)
+    addRecovery("sitting", L["SRC_SITTING"], st.isSitting)
+    addRecovery("campfire", L["SRC_CAMPFIRE"], st.nearCampfire)
+    addRecovery("house", L["SRC_HOUSE"], st.inHouse)
+    addRecovery("neighborhood", L["SRC_NEIGHBORHOOD"], st.inNeighborhood)
 
     local isEatDrink = (type(ICN2.IsEating) == "function" and ICN2:IsEating())
         or (type(ICN2.IsDrinking) == "function" and ICN2:IsDrinking())
-    local src        = {}
-    local gain       = 0
-    local tier       = "none"
-    local recFast    = ICN2.FATIGUE_RECOVERY.fast
-    local recSlow    = ICN2.FATIGUE_RECOVERY.slow
-    local fastFromHousing = st.isSitting and (st.inHouse or st.inNeighborhood)
-    local fastFromResting = st.isResting and (st.isSitting or st.nearCampfire)
-
-    if fastFromHousing or fastFromResting then
-        gain = recFast
-        tier = "fast"
-        if st.isResting then table.insert(src, L["SRC_RESTED_AREA"]) end
-        if st.isSitting    then table.insert(src, L["SRC_SITTING"])   end
-        if st.nearCampfire then table.insert(src, L["SRC_CAMPFIRE"]) end
-        if st.inHouse      then table.insert(src, L["SRC_HOUSE"])     end
-        if st.inNeighborhood then table.insert(src, L["SRC_NEIGHBORHOOD"]) end
-    elseif st.isSitting or st.nearCampfire or st.inHouse or isEatDrink then
-        gain = recSlow
-        tier = "slow"
-        if st.isResting    then table.insert(src, L["SRC_RESTED_AREA"])  end
-        if st.isSitting    then table.insert(src, L["SRC_SITTING"])      end
-        if st.nearCampfire then table.insert(src, L["SRC_CAMPFIRE"])     end
-        if st.inHouse      then table.insert(src, L["SRC_HOUSE"])        end
-        if isEatDrink      then table.insert(src, L["SRC_EAT_DRINK"])    end
+    local foodDrinkRecovery = isEatDrink and (tonumber(recovery.foodDrink) or 0) or 0
+    if foodDrinkRecovery > 0 then
+        rates.fatigue = rates.fatigue + foodDrinkRecovery
+        contributions.foodDrink = foodDrinkRecovery
+        table.insert(src, L["SRC_EAT_DRINK"])
     end
 
-    rates.fatigue             = rates.fatigue + gain
+    local race = select(2, UnitRace("player"))
+    local raceMultiplier = (ICN2.FATIGUE_RECOVERY_RACE_MODIFIERS
+        and ICN2.FATIGUE_RECOVERY_RACE_MODIFIERS[race]) or 1.0
+    environmental = environmental * raceMultiplier
+    rates.fatigue = rates.fatigue + environmental
+
+    local net = rates.fatigue
+    local tier = getFatigueRecoveryTier(net)
+    local state = {
+        tier = tier,
+        sources = src,
+        contributions = contributions,
+        environmental = environmental,
+        raceMultiplier = raceMultiplier,
+        net = net,
+    }
+    ICN2._fatigueRecoveryState = state
     ICN2._fatigueRecoveryTier = tier
     ICN2._fatigueRecoverySrc  = table.concat(src, ", ")
 end
@@ -601,6 +619,21 @@ function ICN2:CancelManualRecovery(need)
     end
 end
 
+-- Adds the currently active timed recovery rate for display and diagnostics.
+-- The tick loop still applies the plan through applyTimedManualRecovery(), so
+-- this preview must never be added to the simulation tick itself.
+function ICN2:_ApplyTimedManualRecoveryPreview(rates, now)
+    local plan = self._manualRecovery
+    if not plan then return end
+    now = now or GetTime()
+    if now < plan.startedAt or now >= plan.startedAt + plan.duration then return end
+    for need, totalAmount in pairs(plan.amounts) do
+        if rates[need] then
+            rates[need] = rates[need] + totalAmount / plan.duration
+        end
+    end
+end
+
 applyTimedManualRecovery = function(now)
     local plan = ICN2._manualRecovery
     if not plan then return end
@@ -675,12 +708,15 @@ frame:SetScript("OnEvent", function(self, event, ...)
         ICN2DB.lastLogout = time()
 
     elseif event == "PLAYER_REGEN_DISABLED" then
+        ICN2:BeginCombatAuraSnapshot()
         ICN2.State.inCombat = true
         ICN2:ClearSitting()
 
     elseif event == "PLAYER_REGEN_ENABLED" then
         ICN2.State.inCombat = false
         ICN2:OnCombatBreakFoodDrink()
+        ICN2:EndCombatAuraSnapshot()
+        ICN2:UpdateState()
         if ICN2._hudPendingShow ~= nil then
             local hud = _G and _G["ICN2HUDFrame"]
             if hud and ICN2._hudPendingShow then
@@ -891,6 +927,7 @@ end
 function ICN2:PrintDetails() -- prints a player-friendly status summary; raw multipliers and pipeline data are available through /icn2 debug
     local s = ICN2DB.settings
     local rates = ICN2:GetCurrentRates()
+    ICN2:_ApplyTimedManualRecoveryPreview(rates)
     local P = "|cFFFF6600ICN2|r"
     local sep = "|cFF555555--------------------------------|r"
 
@@ -949,7 +986,8 @@ function ICN2:PrintDetails() -- prints a player-friendly status summary; raw mul
     table.insert(effects, armorName)
     print(P .. " " .. string.format(L["DETAILS_EFFECTS"], table.concat(effects, ", ")))
 
-    if ICN2._fatigueRecoveryTier ~= "none" then
+    local recoveryState = ICN2._fatigueRecoveryState or {}
+    if recoveryState.sources and #recoveryState.sources > 0 then
         print(P .. " " .. string.format(L["DETAILS_FAT_RECOVERY_SIMPLE"],
             ICN2._fatigueRecoveryTier,
             ICN2._fatigueRecoverySrc ~= "" and ICN2._fatigueRecoverySrc or L["DETAILS_NONE"]))

@@ -390,11 +390,43 @@ ICN2.ARMOR_FATIGUE = {
     CLOTH  = 0.90, -- cloth armor is comfortable and breathable. Default fallback.
 }
 
--- ── Fatigue recovery rates (% per second) ────────────────────────────────────
--- Recovery is a flat rate when resting, modified by armor and situations. Higher values mean faster recovery.
+-- ── Fatigue recovery contributions (points per second) ───────────────────────
+-- Fatigue recovery is additive.  Each independently detected environmental
+-- state contributes its own pressure; the rate engine then compares the total
+-- against the current fatigue decay before choosing the final net state.
 ICN2.FATIGUE_RECOVERY = {
-    slow = 100 / 600,   -- ~0.167 pts/s → 100 points in ~10 minutes
-    fast = 100 / 300,   -- ~0.333 pts/s → 100 points in ~5 minutes
+    resting      = 0.10, -- inn, city, garrison, or another rested area
+    sitting      = 0.10, -- explicit sitting state
+    campfire     = 0.10, -- known campfire / Cozy Fire aura
+    house        = 0.10, -- inside a player house
+    neighborhood = 0.10, -- housing neighborhood
+    foodDrink    = 100 / 600, -- legacy food/drink fatigue recovery contribution
+}
+
+-- Conservative identity modifiers for environmental recovery.  These are
+-- intentionally separate from RACE_MODIFIERS: decay identity and recovery
+-- identity can be tuned independently as the system evolves.
+ICN2.FATIGUE_RECOVERY_RACE_MODIFIERS = {
+    Orc = 1.02, Scourge = 1.06, Tauren = 1.03, Troll = 1.00,
+    BloodElf = 1.00, Goblin = 0.97, Nightborne = 0.92,
+    HighmountainTauren = 1.04, MagharOrc = 1.03, Vulpera = 1.00,
+    ZandalariTroll = 1.02,
+    Human = 1.00, Dwarf = 1.01, NightElf = 1.03, Gnome = 0.98,
+    Draenei = 1.04, Worgen = 0.98, VoidElf = 1.03,
+    LightforgedDraenei = 1.05, DarkIronDwarf = 1.02, KulTiran = 1.01,
+    Mechagnome = 1.06,
+    Pandaren = 1.03, Dracthyr = 1.04, EarthenDwarf = 1.06,
+    Harronir = 0.99,
+}
+
+-- Positive fatigue rates use the same three-arrow concept as the HUD assets:
+-- any meaningful positive net rate is low, then the two thresholds select the
+-- medium and high assets.  These are fatigue-specific so Hunger and Thirst
+-- indicators retain their existing thresholds.
+ICN2.FATIGUE_RATE_THRESHOLDS = {
+    stable = 0.002,
+    medium = 0.167,
+    high = 0.278,
 }
 
 -- ── Housing decay overlays ───────────────────────────────────────────────────

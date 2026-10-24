@@ -11,6 +11,15 @@
 - In a housing neighborhood, Hunger and Thirst decay are reduced to 75%, Fatigue decay is paused, and sitting provides fast Fatigue recovery.
 - Added housing state, detection source, and housing decay stages to debug output.
 
+## Unreleased
+
+### Fatigue recovery pipeline
+
+- Reworked Fatigue recovery into an additive environmental pipeline for resting, sitting, campfires, housing, and neighborhoods.
+- Added conservative race-specific recovery multipliers.
+- Fatigue indicators now use the final net rate to select low, medium, or high recovery visuals.
+- Preserved the last campfire state through combat while protected aura scanning is unavailable, then refreshes it when combat ends.
+
 ## v3.2.3
 
 ### PTR compatibility and alert fixes

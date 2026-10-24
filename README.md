@@ -28,11 +28,12 @@ Needs normally decay over real time. The current situation changes the rate, so 
 
 - Combat increases the pressure on your needs.
 - Swimming, flying, and mounted travel use their own movement modifiers.
-- Rested areas reduce Hunger and Thirst decay and pause Fatigue decay. A rested area alone does not restore Fatigue.
-- Inside a house, Hunger decays at half its otherwise calculated rate, Thirst decay is paused, and Fatigue slowly recovers.
-- In a housing neighborhood, Hunger and Thirst decay at 75% of their otherwise calculated rates, while Fatigue decay is paused.
-- Sitting inside a house or housing neighborhood provides faster Fatigue recovery.
-- Sitting, eating or drinking, and campfires continue to provide their existing Fatigue recovery effects in addition to these housing rules.
+- Rested areas reduce Hunger and Thirst decay and contribute independently to Fatigue recovery.
+- Inside a house, Hunger decays at half its otherwise calculated rate, Thirst decay is paused, and the house contributes to Fatigue recovery.
+- In a housing neighborhood, Hunger and Thirst decay at 75% of their otherwise calculated rates, while the neighborhood contributes to Fatigue recovery.
+- Sitting, campfires, resting, and housing contribute independently to Fatigue recovery; their recovery pressure is combined before the final net rate is calculated.
+- Combat still increases Fatigue decay, but the last safely observed campfire state is retained while Blizzard blocks aura scanning during combat.
+- The Fatigue indicator always reflects the final net rate: decay, pause, or low/medium/high recovery.
 - Entering combat, moving, jumping, casting, mounting, or standing ends the sitting state.
 - A Well Fed effect can temporarily pause Hunger decay.
 - Race, class, armor, and empty needs can affect the final rate.
